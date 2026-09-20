@@ -1,0 +1,759 @@
+f1_v6_avvia_fermentazione:
+  alias: F1 V6 Avvia Fermentazione
+  icon: mdi:play-circle
+  sequence:
+  - variables:
+      profilo_nome: '{{ states(''input_select.f1_v6_profilo_scelto'') }}'
+      avvio_ts: "{% set custom_ts = as_timestamp(states('input_datetime.f1_v6_avvio_datetime'))
+        | int(0) %} {% if is_state('input_boolean.f1_v6_usa_avvio_custom', 'on') and
+        custom_ts > 1577836800 %}\n  {{ custom_ts }}\n{% else %}\n  {{ as_timestamp(now())
+        | int }}\n{% endif %}\n"
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_state(''input_select.f1_v6_stato_controllo'', ''idle'')
+          }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: 'F1 V6: Avvio Bloccato'
+          message: 'Impossibile avviare: la fermentazione di ''{{ states(''input_text.f1_v6_profilo_attivo'')
+            }}'' è già in corso. Premi STOP per interrompere prima.
+
+            '
+          notification_id: f1_v6_avvio_bloccato
+      - stop: Fermentazione già in corso
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.f1_v6_avvio_epoch
+    data:
+      value: '{{ avvio_ts }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f1_v6_profilo_attivo
+    data:
+      value: '{{ profilo_nome }}'
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: shell_command.avvia_fermentazione_v6
+    data:
+      profilo: '{{ profilo_nome }}'
+      avvio_epoch: '{{ avvio_ts }}'
+      modo_controllo: '{{ states(''input_select.f1_v6_modo_controllo'') }}'
+      isteresi: '{{ states(''input_number.f1_v6_isteresi'') | float(0.3) }}'
+      min_cycle_sec: '{{ states(''input_number.f1_v6_min_cycle_sec'') | int(5) }}'
+      kp_risc: '{{ states(''input_number.f1_v6_kp_risc'') | float(5.0) }}'
+      ki_risc: '{{ states(''input_number.f1_v6_ki_risc'') | float(0.005) }}'
+      kd_risc: '{{ states(''input_number.f1_v6_kd_risc'') | float(0.0) }}'
+      kp_frigo: '{{ states(''input_number.f1_v6_kp_frigo'') | float(1.0) }}'
+      ki_frigo: '{{ states(''input_number.f1_v6_ki_frigo'') | float(0.001) }}'
+      kd_frigo: '{{ states(''input_number.f1_v6_kd_frigo'') | float(0.0) }}'
+      pwm_period_sec: '{{ states(''input_number.f1_v6_pwm_period_sec'') | int(60)
+        }}'
+      allarme_timeout: '{{ states(''input_number.f1_v6_allarme_timeout_min'') | int(30)
+        }}'
+  mode: single
+f1_v6_stop_fermentazione:
+  alias: F1 V6 Stop Fermentazione
+  icon: mdi:stop-circle
+  sequence:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.f1_v6_conferma_stop
+  - action: persistent_notification.dismiss
+    data:
+      notification_id: f1_v6_conferma_stop_pending
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f1_v6_profilo_attivo
+    data:
+      value: Nessuno
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: idle
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/stop
+      payload: '{"schema_version":"1.0","request_id":"f1-stop","ts":0,"reason":"manual_stop"}'
+      qos: 1
+      retain: false
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.f1_v6_avvio_epoch
+    data:
+      value: 0
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Stop Inviato'
+      message: Stop inviato all'ESP32 V6. Profilo azzerato.
+      notification_id: f1_v6_stop_inviato
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/profilo
+      payload: ''
+      retain: true
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/f1/stato
+      payload: ''
+      retain: true
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v5/f1/esp/state
+      payload: ''
+      retain: true
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v5/f1/ha/profilo
+      payload: ''
+      retain: true
+  mode: single
+f1_v6_pausa_fermentazione:
+  alias: F1 V6 Pausa Fermentazione
+  icon: mdi:pause-circle
+  sequence:
+  - variables:
+      temp_freeze: '{% set sp = states(''sensor.f1_v6_setpoint'') | float(none) %}
+        {% if sp is not none %}{{ sp }} {% else %}{{ states(''sensor.f1_v6_temperatura'')
+        | float(18.0) }} {% endif %}
+
+        '
+      now_ts: '{{ as_timestamp(now()) | int }}'
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: in_pausa
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/stop
+      payload: '{"schema_version":"1.0","request_id":"f1-pausa","ts":0,"reason":"hold_pause"}'
+      qos: 1
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Fermentazione in Pausa'
+      message: 'ESP32 V6 in pausa. Temperatura corrente: {{ temp_freeze | round(2)
+        }}°C. Profilo e timestamp conservati. Premi RIPRENDI per continuare.
+
+        '
+      notification_id: f1_v6_pausa
+  mode: single
+f1_v6_riprendi_fermentazione:
+  alias: F1 V6 Riprendi Fermentazione
+  icon: mdi:play-circle-outline
+  sequence:
+  - variables:
+      profilo_nome: '{{ states(''input_text.f1_v6_profilo_attivo'') }}'
+  - condition: template
+    value_template: '{{ profilo_nome not in [''Nessuno'', '''', ''unknown'', ''unavailable'']
+      }}
+
+      '
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/start
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-riprendi-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }}}"
+      qos: 1
+      retain: false
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Ripresa Fermentazione'
+      message: 'Profilo ''{{ profilo_nome }}'' reinviato all''ESP32 V6. Modo controllo:
+        {{ states(''input_select.f1_v6_modo_controllo'') }}.
+
+        '
+      notification_id: f1_v6_ripresa
+  mode: single
+f1_v6_invia_profilo:
+  alias: F1 V6 Invia / Reinvia Profilo
+  description: 'Sequenza robusta: control_set -> profile_set (V6 push, no handshake).
+    # NOTA: il profilo è hardcoded. Sostituire con input_select/input_text # che contenga
+    il JSON steps del profilo desiderato.
+
+    '
+  icon: mdi:send-circle
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"control_mode\":\"{{ 'on_off_hyst_sym'
+        if states('input_select.f1_v6_modo_controllo') == 'on_off_isteresi' else states('input_select.f1_v6_modo_controllo')
+        }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f1_v6_kp_risc')
+        | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f1_v6_ki_risc') |
+        float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f1_v6_kd_risc') |
+        float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f1_v6_kp_frigo') |
+        float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f1_v6_ki_frigo') |
+        float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f1_v6_kd_frigo')
+        | float(0.0) }},\n   \"isteresi\":{{ states('input_number.f1_v6_isteresi')
+        | float(0.5) }}\n }}"
+      qos: 1
+      retain: false
+  - delay:
+      milliseconds: 300
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/profile_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-prof-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"profilo\":\"{{ states('input_select.f1_v6_profilo_scelto')
+        | default('Profilo') }}\",\n \"avvio_epoch\":0,\n \"steps\":[\n   {\"step\":\"Fermentazione\",\"temp\":22.0,\"duration_hours\":168},\n
+        \  {\"step\":\"Cold crash\",\"temp\":3.0,\"duration_hours\":48}\n ]}"
+      qos: 1
+      retain: false
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f1_v6_profilo_attivo
+    data:
+      value: '{{ states(''input_select.f1_v6_profilo_scelto'') | default(''Profilo'')
+        }}'
+  mode: single
+f1_v6_reboot:
+  alias: F1 V6 Reboot ESP32
+  icon: mdi:restart
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/reboot
+      payload: '{"schema_version":"1.0","request_id":"f1-reboot","ts":0}'
+      qos: 1
+      retain: false
+  mode: single
+f1_v6_avvia_unified:
+  alias: F1 V6 Avvia (Unificato)
+  icon: mdi:play-circle
+  description: 'Dispatcher: se il profilo scelto è ''costante'' avvia temperatura
+    costante, altrimenti avvia la fermentazione con profilo da file.
+
+    '
+  sequence:
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: input_boolean.f1_v6_modo_costante
+        state: 'on'
+      sequence:
+      - action: script.f1_v6_avvia_costante
+    default:
+    - action: script.f1_v6_avvia_fermentazione
+  mode: single
+f1_v6_avvia_costante:
+  alias: F1 V6 Avvia Temperatura Costante
+  icon: mdi:thermometer-check
+  description: 'Avvia il controllo a temperatura costante per 90 giorni (2160 h).
+    Equivale a un profilo con un unico step alla temperatura scelta. Il controllo
+    scelto in Setup (On/Off, PID…) gestisce la temperatura.
+
+    '
+  sequence:
+  - variables:
+      temp_target: '{{ states(''input_number.f1_v6_temp_costante'') | float(20.0)
+        }}'
+      avvio_ts: '{{ as_timestamp(now()) | int }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_state(''input_select.f1_v6_stato_controllo'', ''idle'')
+          }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: 'F1 V6: Avvio Bloccato'
+          message: 'Impossibile avviare: una fermentazione è già in corso. Premi STOP
+            per interrompere prima.
+
+            '
+          notification_id: f1_v6_avvio_bloccato
+      - stop: Fermentazione già in corso
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.f1_v6_avvio_epoch
+    data:
+      value: '{{ avvio_ts }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f1_v6_profilo_attivo
+    data:
+      value: Costante {{ temp_target | round(1) }}°C
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-cost-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"control_mode\":\"{{ 'on_off_hyst_sym'
+        if states('input_select.f1_v6_modo_controllo') == 'on_off_isteresi' else states('input_select.f1_v6_modo_controllo')
+        }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f1_v6_kp_risc')
+        | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f1_v6_ki_risc') |
+        float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f1_v6_kd_risc') |
+        float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f1_v6_kp_frigo') |
+        float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f1_v6_ki_frigo') |
+        float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f1_v6_kd_frigo')
+        | float(0.0) }},\n   \"isteresi\":{{ states('input_number.f1_v6_isteresi')
+        | float(0.5) }}\n }}"
+      qos: 1
+      retain: false
+  - delay:
+      milliseconds: 300
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/profile_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-cost-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"profilo\":\"Costante {{ temp_target
+        | round(1) | string }}C\",\n \"avvio_epoch\":0,\n \"steps\":[{\"step\":\"Temperatura
+        costante\",\"temp\":{{ temp_target | round(1) }},\"duration_hours\":2160}]}"
+      qos: 1
+      retain: false
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Temperatura Costante Avviata'
+      message: 'Controllo avviato a {{ temp_target | round(1) }}°C per 90 giorni.
+        Algoritmo: {{ states(''input_select.f1_v6_modo_controllo'') }}.
+
+        '
+      notification_id: f1_v6_costante_avviata
+  mode: single
+f2_v6_avvia_fermentazione:
+  alias: F2 V6 Avvia Fermentazione
+  icon: mdi:play-circle
+  sequence:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_state(''input_select.f2_v6_stato_controllo'', ''in_corso'')
+          }}
+
+          '
+      sequence:
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/cmd/start
+          payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-start-{{ now().strftime('%H%M%S')
+            }}\",\n \"ts\":{{ now()|as_timestamp|int }}}"
+          qos: 1
+          retain: false
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.f2_v6_profilo_attivo
+        data:
+          value: '{{ states(''input_select.f2_v6_profilo_scelto'') }}'
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_stato_controllo
+        data:
+          option: in_corso
+    default:
+    - action: persistent_notification.create
+      data:
+        title: 'F2 V6: Fermentazione già attiva'
+        message: Fermentazione già in corso. Esegui prima uno Stop se vuoi riavviare.
+        notification_id: f2_v6_gia_attiva
+  mode: single
+f2_v6_stop_fermentazione:
+  alias: F2 V6 Stop Fermentazione
+  icon: mdi:stop-circle
+  sequence:
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: input_boolean.f2_v6_conferma_stop
+        state: 'on'
+      sequence:
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/cmd/stop
+          payload: '{"schema_version":"1.0","request_id":"f2-stop","ts":0,"reason":"manual_stop"}'
+          qos: 1
+          retain: false
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_stato_controllo
+        data:
+          option: fermo
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.f2_v6_profilo_attivo
+        data:
+          value: Nessuno
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.f2_v6_conferma_stop
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: f2_v6_conferma_stop_pending
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/profilo
+          payload: ''
+          retain: true
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/f2/stato
+          payload: ''
+          retain: true
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v5/f2/esp/state
+          payload: ''
+          retain: true
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v5/f2/ha/profilo
+          payload: ''
+          retain: true
+    default:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.f2_v6_conferma_stop
+    - action: persistent_notification.create
+      data:
+        title: 'F2 V6: Conferma Stop'
+        message: 'Premi Stop di nuovo entro 30 secondi per fermare la fermentazione
+          F2. La protezione automatica scatterà tra 30s.
+
+          '
+        notification_id: f2_v6_conferma_stop_pending
+  mode: single
+f2_v6_pausa_fermentazione:
+  alias: F2 V6 Pausa Fermentazione
+  description: In V6 non esiste un comando pausa esplicito. Lo stop è sicuro e il
+    profilo viene re-inviato su riconnessione.
+  icon: mdi:pause-circle
+  sequence:
+  - condition: state
+    entity_id: input_select.f2_v6_stato_controllo
+    state: in_corso
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/stop
+      payload: '{"schema_version":"1.0","request_id":"f2-pausa","ts":0,"reason":"hold_pause"}'
+      qos: 1
+      retain: false
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f2_v6_stato_controllo
+    data:
+      option: in_pausa
+  mode: single
+f2_v6_riprendi_fermentazione:
+  alias: F2 V6 Riprendi Fermentazione
+  icon: mdi:play-pause
+  sequence:
+  - condition: state
+    entity_id: input_select.f2_v6_stato_controllo
+    state: in_pausa
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/start
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-riprendi-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }}}"
+      qos: 1
+      retain: false
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f2_v6_stato_controllo
+    data:
+      option: in_corso
+  mode: single
+f2_v6_invia_profilo:
+  alias: F2 V6 Invia / Reinvia Profilo
+  description: 'Sequenza robusta: control_set -> profile_set (V6 push, no handshake).
+    # NOTA: il profilo è hardcoded. Sostituire con input_select/input_text # che contenga
+    il JSON steps del profilo desiderato.
+
+    '
+  icon: mdi:send-circle
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"control_mode\":\"{{ 'on_off_hyst_sym'
+        if states('input_select.f2_v6_modo_controllo') == 'on_off_isteresi' else states('input_select.f2_v6_modo_controllo')
+        }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f2_v6_kp_risc')
+        | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f2_v6_ki_risc') |
+        float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f2_v6_kd_risc') |
+        float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f2_v6_kp_frigo') |
+        float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f2_v6_ki_frigo') |
+        float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f2_v6_kd_frigo')
+        | float(0.0) }}\n }}"
+      qos: 1
+      retain: false
+  - delay:
+      milliseconds: 300
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/profile_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-prof-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"profilo\":\"{{ states('input_select.f2_v6_profilo_scelto')
+        | default('Profilo') }}\",\n \"avvio_epoch\":0,\n \"steps\":[\n   {\"step\":\"Fermentazione\",\"temp\":20.0,\"duration_hours\":168},\n
+        \  {\"step\":\"Cold crash\",\"temp\":3.0,\"duration_hours\":48}\n ]}"
+      qos: 1
+      retain: false
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f2_v6_profilo_attivo
+    data:
+      value: '{{ states(''input_select.f2_v6_profilo_scelto'') | default(''Profilo'')
+        }}'
+  mode: single
+f2_v6_reboot:
+  alias: F2 V6 Reboot ESP32
+  icon: mdi:restart
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/reboot
+      payload: '{"schema_version":"1.0","request_id":"f2-reboot","ts":0}'
+      qos: 1
+      retain: false
+  mode: single
+f2_v6_avvia_costante:
+  alias: F2 V6 Avvia Temperatura Costante
+  icon: mdi:thermometer-check
+  description: 'Avvia il controllo a temperatura costante per 90 giorni (2160 h).
+    Equivale a un profilo con un unico step alla temperatura scelta. Il controllo
+    scelto in Setup (On/Off, PID…) gestisce la temperatura.
+
+    '
+  sequence:
+  - variables:
+      temp_target: '{{ states(''input_number.f2_v6_temp_costante'') | float(20.0)
+        }}'
+      avvio_ts: '{{ as_timestamp(now()) | int }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_state(''input_select.f2_v6_stato_controllo'', ''idle'')
+          }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: 'F2 V6: Avvio Bloccato'
+          message: 'Impossibile avviare: una fermentazione è già in corso. Premi STOP
+            per interrompere prima.
+
+            '
+          notification_id: f2_v6_avvio_bloccato
+      - stop: Fermentazione già in corso
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.f2_v6_avvio_epoch
+    data:
+      value: '{{ avvio_ts }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f2_v6_profilo_attivo
+    data:
+      value: Costante {{ temp_target | round(1) }}°C
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f2_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-cost-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"control_mode\":\"{{ 'on_off_hyst_sym'
+        if states('input_select.f2_v6_modo_controllo') == 'on_off_isteresi' else states('input_select.f2_v6_modo_controllo')
+        }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f2_v6_kp_risc')
+        | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f2_v6_ki_risc') |
+        float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f2_v6_kd_risc') |
+        float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f2_v6_kp_frigo') |
+        float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f2_v6_ki_frigo') |
+        float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f2_v6_kd_frigo')
+        | float(0.0) }}\n }}"
+      qos: 1
+      retain: false
+  - delay:
+      milliseconds: 300
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/profile_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-cost-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"profilo\":\"Costante {{ temp_target
+        | round(1) | string }}C\",\n \"avvio_epoch\":0,\n \"steps\":[{\"step\":\"Temperatura
+        costante\",\"temp\":{{ temp_target | round(1) }},\"duration_hours\":2160}]}"
+      qos: 1
+      retain: false
+  - action: persistent_notification.create
+    data:
+      title: 'F2 V6: Temperatura Costante Avviata'
+      message: 'Controllo avviato a {{ temp_target | round(1) }}°C per 90 giorni.
+        Algoritmo: {{ states(''input_select.f2_v6_modo_controllo'') }}.
+
+        '
+      notification_id: f2_v6_costante_avviata
+  mode: single
+v6_f1_safe_mode_change:
+  alias: V6 F1 — Cambio mode sicuro
+  description: 'Sequenza sicura stop→ack→control_set→ack→start. Usare questo script
+    invece del select diretto per cambiare algoritmo di controllo mentre il fermentatore
+    è in RUNNING.
+
+    '
+  icon: mdi:swap-horizontal-bold
+  fields:
+    control_mode:
+      description: Algoritmo (on_off/on_off_hyst_sym/on_off_hyst_asym/P/PI/PD/PID)
+      default: on_off_hyst_sym
+      selector:
+        select:
+          options:
+          - on_off
+          - on_off_hyst_sym
+          - on_off_hyst_asym
+          - P
+          - PI
+          - PD
+          - PID
+    params:
+      description: Oggetto parametri JSON (es. {kp_heat:5.0, ki_heat:0.005})
+      default: {}
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/stop
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-stop-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\"reason\":\"mode_change\"}"
+      qos: 1
+      retain: false
+  - wait_for_trigger:
+    - trigger: mqtt
+      topic: fermentazione/v6/f1/esp/ack
+      value_template: '{{ value_json.get(''cmd'') == ''stop'' }}'
+    timeout: 00:00:10
+    continue_on_timeout: false
+  - condition: template
+    value_template: '{{ wait.trigger is not none and wait.trigger.payload_json.status
+      == ''ok'' }}'
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\"control_mode\":\"{{ control_mode
+        }}\",\n \"params\":{{ params | tojson }}}"
+      qos: 1
+      retain: false
+  - wait_for_trigger:
+    - trigger: mqtt
+      topic: fermentazione/v6/f1/esp/ack
+      value_template: '{{ value_json.get(''cmd'') == ''control_set'' }}'
+    timeout: 00:00:10
+    continue_on_timeout: false
+  - condition: template
+    value_template: '{{ wait.trigger is not none and wait.trigger.payload_json.status
+      == ''ok'' }}'
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f1/ha/cmd/start
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f1-start-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }}}"
+      qos: 1
+      retain: false
+  mode: single
+v6_f2_safe_mode_change:
+  alias: V6 F2 — Cambio mode sicuro
+  description: 'Sequenza sicura stop→ack→control_set→ack→start per F2.
+
+    '
+  icon: mdi:swap-horizontal-bold
+  fields:
+    control_mode:
+      description: Algoritmo
+      default: on_off_hyst_sym
+      selector:
+        select:
+          options:
+          - on_off
+          - on_off_hyst_sym
+          - on_off_hyst_asym
+          - P
+          - PI
+          - PD
+          - PID
+    params:
+      description: Oggetto parametri JSON
+      default: {}
+  sequence:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/stop
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-stop-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\"reason\":\"mode_change\"}"
+      qos: 1
+      retain: false
+  - wait_for_trigger:
+    - trigger: mqtt
+      topic: fermentazione/v6/f2/esp/ack
+      value_template: '{{ value_json.get(''cmd'') == ''stop'' }}'
+    timeout: 00:00:10
+    continue_on_timeout: false
+  - condition: template
+    value_template: '{{ wait.trigger is not none and wait.trigger.payload_json.status
+      == ''ok'' }}'
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-ctrl-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\"control_mode\":\"{{ control_mode
+        }}\",\n \"params\":{{ params | tojson }}}"
+      qos: 1
+      retain: false
+  - wait_for_trigger:
+    - trigger: mqtt
+      topic: fermentazione/v6/f2/esp/ack
+      value_template: '{{ value_json.get(''cmd'') == ''control_set'' }}'
+    timeout: 00:00:10
+    continue_on_timeout: false
+  - condition: template
+    value_template: '{{ wait.trigger is not none and wait.trigger.payload_json.status
+      == ''ok'' }}'
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/start
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-start-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }}}"
+      qos: 1
+      retain: false
+  mode: single
+test_email_alert:
+  alias: Test Email Alert
+  icon: mdi:email-arrow-right
+  description: Invia un'email di test tramite il relay SMTP configurato. Crea una
+    notifica persistente con il feedback dell'esito.
+  sequence:
+  - action: notify.fermentazione_email
+    data:
+      title: '[TEST] Home Assistant — Email Alert OK'
+      message: 'Test email inviata da Home Assistant — {{ now().strftime(''%Y-%m-%d
+        %H:%M:%S'') }}
+
+        Relay: <smtp-server> (<smtp-server-ip>:25) Mittente: <sender@example.com>
+
+        Se ricevi questo messaggio il sistema di alert è funzionante.
+
+        '
+  - action: persistent_notification.create
+    data:
+      title: Email di test inviata ✓
+      message: 'Email inviata a <recipient@example.com> — {{ now().strftime(''%H:%M:%S'')
+        }}. Verifica la casella di posta.
+
+        '
+      notification_id: test_email_alert_ok
+  mode: single

@@ -1,0 +1,34 @@
+# ============================================================
+# TEMPLATES V3 — Sensori derivati
+# ============================================================
+
+- sensor:
+    - name: "F1 Delta Temperatura"
+      unique_id: f1_v3_delta_temp
+      unit_of_measurement: "°C"
+      device_class: temperature
+      icon: mdi:thermometer-lines
+      state: >
+        {% set t = states('sensor.f1_temperatura_reale') | float(none) %}
+        {% set s = states('sensor.f1_setpoint_corrente') | float(none) %}
+        {% if t is not none and s is not none %}
+          {{ (t - s) | round(2) }}
+        {% else %}
+          unknown
+        {% endif %}
+
+    - name: "F1 Giorni Step"
+      unique_id: f1_v3_giorni_step
+      unit_of_measurement: "giorni"
+      icon: mdi:calendar-today
+      state: >
+        {% set ore = states('sensor.f1_ore_step') | float(0) %}
+        {{ (ore / 24) | round(1) }}
+
+    - name: "F1 Giorni Totali"
+      unique_id: f1_v3_giorni_totali
+      unit_of_measurement: "giorni"
+      icon: mdi:calendar-range
+      state: >
+        {% set ore = states('sensor.f1_ore_totali') | float(0) %}
+        {{ (ore / 24) | round(1) }}

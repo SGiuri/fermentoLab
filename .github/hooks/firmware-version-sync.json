@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "windows": "powershell -ExecutionPolicy Bypass -NoProfile -File .github/hooks/firmware-version-sync.ps1",
+        "command": "true",
+        "timeout": 10
+      }
+    ]
+  }
+}

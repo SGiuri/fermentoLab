@@ -1,0 +1,298 @@
+================================================================
+FERMENTATORE V4 — RIFERIMENTO MQTT E CONFIGURAZIONE
+Ultimo aggiornamento: 2026-05-12 (firmware 4.1.0)
+================================================================
+Broker: HiveMQ Cloud (<your-cluster-id>.s1.eu.hivemq.cloud:8883)
+TLS: attivo, certificato non verificato (setInsecure)
+Client ID: esp32_f1_v4
+Autenticazione: username/password (vedi config.h)
+Prefisso topic: fermentazione/f1/
+
+
+================================================================
+TOPIC — ESP32 → HOME ASSISTANT (pubblicazioni)
+================================================================
+
+fermentazione/f1/richiedi_profilo
+  Direzione : ESP32 → HA
+  QoS       : 0, retain: no
+  Quando    : all'avvio, dopo connessione MQTT, una volta sola
+  Payload   : {"ts": <unix_epoch>, "client": "esp32_f1_v4"}
+  Scopo     : chiede a HA se c'è un profilo attivo
+
+fermentazione/f1/stato
+  Direzione : ESP32 → HA
+  QoS       : 0, retain: YES
+  Quando    : ogni 60 secondi (STATUS_INTERVAL_MS)
+  Payload JSON:
+    {
+      "temp_reale":    18.45,       // temperatura DS18B20 [°C]
+      "setpoint":      19.00,       // setpoint corrente calcolato [°C]
+      "step_nome":     "Primaria",  // nome step corrente (o stato FSM)
+      "step_index":    0,           // indice step (0-based), -1 se STANDBY/HOLDING
+      "ore_step":      12.5,        // ore dall'inizio dello step corrente
+      "ore_totali":    12.5,        // ore dall'avvio del profilo
+      "riscaldatore":  false,
+      "refrigeratore": false,
+      "allarme":       false,
+      "profilo":       "ale_generica",  // "nessuno" se STANDBY
+      "stato_fsm":     "RUNNING",       // RUNNING|STANDBY|HOLDING|ALLARME|...
+      "firmware":      "4.1.0"          // versione firmware (FIRMWARE_VERSION in config.h)
+    }
+
+fermentazione/f1/ack
+  Direzione : ESP32 → HA
+  QoS       : 0, retain: no
+  Quando    : dopo ogni cambio di stato significativo
+  Payload JSON:
+    {
+      "stato":    "avviato",        // vedi valori possibili sotto
+      "profilo":  "ale_generica",
+      "uptime_s": 3600
+    }
+  Valori "stato":
+    "avviato"              → profilo ricevuto e avviato correttamente
+    "errore_parsing"       → JSON del profilo non valido
+    "fermato"              → ricevuto cmd/stop, tornato in STANDBY
+    "profilo_completato"   → tutti gli step terminati, entra in HOLDING
+    "riavvio_remoto"       → ricevuto cmd/reboot
+    "test_no_wifi_avviato" → ricevuto cmd/test_no_wifi
+
+fermentazione/f1/allarme
+  Direzione : ESP32 → HA
+  QoS       : 1, retain: no
+  Quando    : su eventi anomali
+  Payload JSON:
+    {
+      "tipo":           "sensore_offline",  // vedi valori sotto
+      "durata_minuti":  5,
+      "uptime_s":       3600
+    }
+  Valori "tipo":
+    "sensore_offline"   → DS18B20 in errore per allarme_timeout_minuti
+    "riavvio_in_corso"  → prima del riavvio (reboot remoto o allarme)
+    "esp32_offline"     → Last Will Testament (broker lo pubblica se ESP32 cade senza disconnettersi)
+
+fermentazione/f1/pong
+  Direzione : ESP32 → HA
+  QoS       : 0, retain: no
+  Quando    : risposta a cmd/ping
+  Payload JSON:
+    {
+      "free_heap": 180000,  // heap libera ESP32 [byte]
+      "uptime_s":  3600,
+      "wifi_rssi": -62      // segnale WiFi [dBm]
+    }
+
+fermentazione/f1/log
+  Direzione : ESP32 → HA
+  QoS       : 0, retain: no
+  Quando    : messaggi di log (livello >= LOG_MQTT_LEVEL in config.h)
+  Payload   : stringa testo, es. "[INFO][PROFILO] 'ale_generica' ricevuto (6 step)."
+
+
+================================================================
+TOPIC — HOME ASSISTANT → ESP32 (comandi ricevuti)
+================================================================
+
+fermentazione/f1/cmd/profilo
+  QoS  : 1
+  Quando usarlo : per avviare o aggiornare un profilo di fermentazione,
+                  oppure per rispondere alla richiesta di richiedi_profilo
+                  con "nessun_profilo".
+  
+  CASO 1 — Avvio profilo completo:
+    {
+      "profilo":               "ale_generica",
+      "avvio_epoch":           1745000000,     // timestamp Unix avvio (obbligatorio)
+      "isteresi":              0.5,            // [°C] default 0.5 — sovrascrive DEFAULT_ISTERESI
+      "min_cycle_sec":         5,              // min tempo ON/OFF pompa [s] default 5
+                                               // (alternativa legacy: "min_cycle_minutes" viene
+                                               //  accettato e convertito ×60 in secondi)
+      "allarme_timeout_minuti": 5,             // watchdog sensore [min] default 5
+      "steps": [
+        {
+          "step":           "Fermentazione Primaria",
+          "temp":           19.0,
+          "duration_hours": 120.0              // step a temperatura costante
+        },
+        {
+          "step":       "Rampa Diacetile",
+          "temp":       21.0,
+          "ramp_hours": 24.0                   // step a rampa lineare verso temp
+        },
+        ...
+      ]
+    }
+
+    Nota: ogni step ha SOLO duration_hours (costante) O ramp_hours (rampa), non entrambi.
+    Numero massimo di step: 20 (MAX_STEPS in config.h).
+
+  CASO 2 — Nessun profilo attivo (risposta a richiedi_profilo):
+    {
+      "stato":        "nessun_profilo",
+      "temp_standby": 18.0   // opzionale, sovrascrive la temperatura di standby
+    }
+
+  Comportamento ESP32:
+    - Se il JSON contiene "steps" → avvia RUNNING
+    - Se "stato" == "nessun_profilo" → va in STANDBY (con eventuale temp_standby)
+    - Errore parsing → pubblica ack "errore_parsing" e rimane in attesa
+
+fermentazione/f1/cmd/stop
+  QoS     : 1
+  Payload : (qualsiasi, non analizzato)
+  Effetto : ferma il profilo in corso, torna in STANDBY, cancella il profilo da NVS.
+            Valido da: RUNNING, STANDBY, HOLDING.
+
+fermentazione/f1/cmd/temp_standby
+  QoS     : 0
+  Payload : {"temp": 18.0}
+  Effetto : aggiorna la temperatura di mantenimento STANDBY al volo,
+            senza riavvio. Valido in qualsiasi stato operativo.
+
+fermentazione/f1/cmd/ping
+  QoS     : 0
+  Payload : (qualsiasi)
+  Effetto : ESP32 risponde immediatamente su fermentazione/f1/pong
+            con heap, uptime e RSSI. Utile per diagnostica.
+
+fermentazione/f1/cmd/reboot
+  QoS     : 1
+  Payload : (qualsiasi)
+  Effetto : spegne i relè, pubblica ack "riavvio_remoto", si riavvia.
+
+fermentazione/f1/cmd/test_no_wifi
+  QoS     : 1
+  Payload : (qualsiasi)
+  Effetto : al prossimo riavvio usa password WiFi intenzionalmente sbagliata
+            per testare il fallback duty cycle offline.
+            Il flag si auto-cancella dalla NVS dopo un boot.
+            Utile solo in fase di sviluppo/test.
+
+
+================================================================
+CONFIGURAZIONE COMPILE-TIME (config.h)
+================================================================
+
+--- WiFi principale ---
+WIFI_SSID              "IoT"            rete scolastica
+WIFI_TIMEOUT_MS        20000            timeout connessione WiFi [ms]
+Le password WiFi sono selezionate per MAC address in wifi_connection.ino.
+
+--- Hotspot OTA ---
+HOTSPOT_SSID           nome dell'hotspot personale per aggiornamenti OTA
+HOTSPOT_PASS           password hotspot
+Logica: all'avvio l'ESP32 scansiona le reti. Se trova HOTSPOT_SSID si
+connette lì e avvia ArduinoOTA; altrimenti usa la rete standard.
+
+--- OTA ---
+OTA_HOSTNAME           "fermentatore-v4"   nome che appare in Arduino IDE
+OTA_PASSWORD           password richiesta da Arduino IDE per il caricamento
+
+--- MQTT ---
+MQTT_SERVER            HiveMQ Cloud endpoint
+MQTT_PORT              8883 (TLS)
+MQTT_CLIENT_ID         "esp32_f1_v4"
+MQTT_USER / MQTT_PASS  credenziali broker
+MQTT_CONNECT_TIMEOUT_MS 15000  timeout connessione MQTT [ms]
+
+--- Hardware ---
+PIN_DS18B20            33   OneWire DS18B20
+PIN_RISCALDATORE       16   Relè riscaldatore (Active LOW)
+PIN_REFRIGERATORE      17   Relè refrigeratore (Active LOW)
+PIN_OLED_SDA           21   I2C SDA
+PIN_OLED_SCL           22   I2C SCL
+OLED_I2C_ADDR          0x3C (o 0x3D se JP1 soldato)
+
+--- Timing ---
+STATUS_INTERVAL_MS          60000   heartbeat MQTT stato [ms]
+SENSOR_READ_INTERVAL_MS      5000   lettura DS18B20 [ms]
+PROFILO_REQUEST_TIMEOUT_MS  15000   attesa risposta HA a richiedi_profilo [ms]
+ALLARME_REBOOT_DELAY_MS     30000   attesa prima del riavvio su allarme sensore [ms]
+WIFI_BLACKOUT_REBOOT_MS   1200000   riavvio automatico dopo 20 min senza WiFi [ms]
+DISPLAY_UPDATE_MS            1000   refresh display OLED [ms]
+
+--- Duty cycle fallback (sensore guasto) ---
+DUTY_CYCLE_WINDOW_MS     3600000   storico rolling [ms] = 1 ora
+DUTY_CYCLE_BUCKET_MS       60000   granularità bucket [ms] = 1 min
+DUTY_CYCLE_APPLY_WINDOW_MS 600000  finestra applicazione fallback [ms] = 10 min
+DUTY_CYCLE_ESTIMATE_MIN_MS  60000  minimo di storico per attivare la stima [ms]
+Nota: il fallback duty cycle si attiva SOLO quando il sensore è non valido.
+      Se cade solo la rete WiFi, il controllo ad isteresi continua normalmente.
+
+--- Filtro anti-oscillazione sensore ---
+SENSOR_SPIKE_DELTA_C            7.0   salto minimo per considerare uno spike [°C]
+SENSOR_OSC_CONSECUTIVE_LIMIT      3   spike incoerenti consecutivi prima di allarme
+
+--- Valori default (usati se il profilo non li specifica) ---
+DEFAULT_STANDBY_TEMP    18.0   temperatura standby [°C]
+DEFAULT_ISTERESI         0.5   isteresi relè [°C]  ← era 0.3 fino a fw 4.0.x
+DEFAULT_MIN_CYCLE_SEC      5   min tempo ON/OFF pompa/relè [s]  ← era minuti (compressore)
+
+--- Logging ---
+LOG_SERIAL_LEVEL   LOG_DEBUG   livello log su Serial (0=nessuno .. 4=debug)
+LOG_MQTT_LEVEL     LOG_INFO    livello log pubblicato su fermentazione/f1/log
+Livelli: LOG_NONE=0  LOG_ERROR=1  LOG_WARN=2  LOG_INFO=3  LOG_DEBUG=4
+
+--- NVS ---
+NVS_NS_FERM        "ferm_v4"   namespace Preferences (flash ESP32)
+NVS_KEY_TEST_NO_WIFI           flag test offline (si auto-cancella dopo un boot)
+
+
+================================================================
+FORMATO PROFILO JSON (file .json in HA, prima della conversione)
+================================================================
+I file .json salvati in Home Assistant usano giorni (più comodo per l'utente).
+Il script avvia_fermentazione.py converte automaticamente in ore prima di
+pubblicare su MQTT.
+
+Formato file (es. ale_generica.json):
+  {
+    "profilo": [
+      { "step": "Fermentazione Primaria", "temp": 19, "duration_days": 5 },
+      { "step": "Rampa Diacetile",        "temp": 21, "ramp_days": 1 },
+      { "step": "Diacetyl Rest",          "temp": 21, "duration_days": 3 },
+      { "step": "Rampa Cold Crash",       "temp": 4,  "ramp_days": 1 },
+      { "step": "Cold Crash",             "temp": 4,  "duration_days": 5 }
+    ]
+  }
+
+Campi step:
+  step           nome descrittivo (max 47 caratteri)
+  temp           temperatura target [°C]  (o temperatura finale per le rampe)
+  duration_days  durata a temperatura costante [giorni] — esclusivo con ramp_days
+  ramp_days      durata della rampa lineare verso temp [giorni] — esclusivo con duration_days
+
+Avvio via script:
+  python3 avvia_fermentazione.py <profilo_nome> <avvio_epoch> [isteresi] [allarme_timeout_min]
+  Esempio:
+  python3 avvia_fermentazione.py ale_generica 1745000000 0.3 5
+
+
+================================================================
+MACCHINA A STATI — riepilogo
+================================================================
+WIFI_CONNESSIONE  → (connesso) → MQTT_CONNESSIONE
+                  → (timeout)  → RUNNING (da NVS) | STANDBY
+
+MQTT_CONNESSIONE  → (connesso) → RICHIESTA_PROFILO
+                  → (timeout)  → RUNNING (da NVS) | STANDBY
+
+RICHIESTA_PROFILO → (profilo JSON)      → RUNNING
+                  → (nessun_profilo)    → RUNNING (da NVS) | STANDBY
+                  → (timeout 15s)       → RUNNING (da NVS) | STANDBY
+
+RUNNING    → (profilo completato) → HOLDING
+           → (cmd/stop)           → STANDBY
+           → (allarme sensore)    → ALLARME_SENSORE
+
+STANDBY    → (cmd/profilo)        → RUNNING
+           → (allarme sensore)    → ALLARME_SENSORE
+
+HOLDING    → (cmd/stop)           → STANDBY
+           → (cmd/profilo)        → RUNNING
+           → (allarme sensore)    → ALLARME_SENSORE
+
+ALLARME_SENSORE → (sensore ok)    → stato precedente
+                → (dopo 30s)      → ESP.restart()

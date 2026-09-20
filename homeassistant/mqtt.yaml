@@ -1,0 +1,285 @@
+sensor:
+
+  # ── V6 — Sensori heartbeat (fermentazione/v6/f1/esp/state) ─────────────────
+
+  # ── V6 F1 — Diagnostica (esp/log + esp/alarm tipo) ───────────────────────
+
+  # ── V6 F2 — Sensori heartbeat (fermentazione/v6/f2/esp/state) ─────────────
+
+  - name: "F2 V6 Temperatura"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_temp_reale
+    device_class: temperature
+    unit_of_measurement: "°C"
+    value_template: "{{ value_json.temp_reale }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:thermometer
+
+  - name: "F2 V6 Setpoint"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_setpoint
+    device_class: temperature
+    unit_of_measurement: "°C"
+    value_template: "{{ value_json.setpoint }}"
+    expire_after: 180
+    force_update: true
+    state_class: measurement
+    icon: mdi:target
+
+  - name: "F2 V6 PID Output"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_pid_output
+    unit_of_measurement: "%"
+    value_template: "{{ value_json.pid_output | default(0) | round(1) }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:chart-bell-curve-cumulative
+
+  - name: "F2 V6 Duty Riscaldatore"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_duty_risc
+    unit_of_measurement: "%"
+    value_template: "{{ value_json.duty_riscaldatore | default(0) | round(1) }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:fire
+
+  - name: "F2 V6 Duty Refrigeratore"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_duty_frigo
+    unit_of_measurement: "%"
+    value_template: "{{ value_json.duty_refrigeratore | default(0) | round(1) }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:snowflake
+
+  - name: "F2 V6 Ore Step"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_ore_step
+    unit_of_measurement: "h"
+    value_template: "{{ value_json.ore_step | float(0) | round(1) }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:clock-outline
+
+  - name: "F2 V6 Ore Totali"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_ore_totali
+    unit_of_measurement: "h"
+    value_template: "{{ value_json.ore_totali | float(0) | round(1) }}"
+    expire_after: 180
+    state_class: measurement
+    icon: mdi:clock-check-outline
+
+  - name: "F2 V6 Step"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_step_nome
+    value_template: "{{ value_json.step_nome }}"
+    expire_after: 180
+    icon: mdi:stairs
+
+  - name: "F2 V6 Step Index"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_step_index
+    value_template: "{{ value_json.step_index }}"
+    expire_after: 180
+    icon: mdi:counter
+
+  - name: "F2 V6 Profilo"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_profilo
+    value_template: "{{ value_json.profilo }}"
+    expire_after: 180
+    icon: mdi:flask
+
+  - name: "F2 V6 FSM"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_stato_fsm
+    value_template: "{{ value_json.stato_fsm }}"
+    expire_after: 180
+    icon: mdi:state-machine
+
+  - name: "F2 V6 Modo Controllo Attivo"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_modo_controllo_attivo
+    value_template: "{{ value_json.control_mode | default('n/d') }}"
+    expire_after: 180
+    icon: mdi:tune
+
+  - name: "F2 V6 Firmware"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_firmware
+    value_template: "{{ value_json.firmware | default('n/d') }}"
+    expire_after: 180
+    icon: mdi:chip
+
+  - name: "F2 V6 Hardware Target"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: ferm_v6_f2_hardware_target
+    value_template: "{{ value_json.hardware_target | default('n/d') }}"
+    expire_after: 180
+    icon: mdi:chip-outline
+
+  - name: "F2 V6 ACK"
+    state_topic: "fermentazione/v6/f2/esp/ack"
+    unique_id: f2_v6_ack
+    value_template: "{{ value_json.status | default('n/d') }}"
+    json_attributes_topic: "fermentazione/v6/f2/esp/ack"
+    icon: mdi:check-circle-outline
+
+  # ── V6 F2 — Diagnostica (esp/log + esp/alarm tipo) ───────────────────────
+
+  - name: "F2 V6 ESP Log"
+    state_topic: "fermentazione/v6/f2/esp/log"
+    unique_id: ferm_v6_f2_esp_log
+    value_template: "{{ value }}"
+    icon: mdi:console-line
+
+  - name: "F2 V6 Allarme Tipo"
+    state_topic: "fermentazione/v6/f2/esp/alarm"
+    unique_id: ferm_v6_f2_allarme_tipo
+    value_template: "{{ value_json.tipo | default('nessuno') }}"
+    json_attributes_topic: "fermentazione/v6/f2/esp/alarm"
+    icon: mdi:alert-circle-outline
+
+binary_sensor:
+
+  # ── V6 — Sensori binari ──────────────────────────────────────────────────
+
+  # ── V6 F2 — Binary sensors ──────────────────────────────────────────────
+
+  - name: "F2 V6 Riscaldatore"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_riscaldatore
+    value_template: "{{ value_json.riscaldatore | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: heat
+    icon: mdi:radiator
+
+  - name: "F2 V6 Refrigeratore"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_refrigeratore
+    value_template: "{{ value_json.refrigeratore | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: cold
+    icon: mdi:snowflake-variant
+
+  - name: "F2 V6 Allarme"
+    state_topic: "fermentazione/v6/f2/esp/state"
+    unique_id: f2_v6_allarme
+    value_template: "{{ value_json.allarme | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: problem
+    icon: mdi:alert-circle
+
+  - name: "F2 V6 Online"
+    state_topic: "fermentazione/v6/f2/esp/alarm"
+    unique_id: f2_v6_online
+    value_template: >-
+      {{ 'off' if value_json.tipo == 'esp32_offline' else 'on' }}
+    payload_on: "on"
+    payload_off: "off"
+    device_class: connectivity
+
+button:
+  # ── V5 — Pulsanti comandi ─────────────────────────────────────────────────
+
+  # ── V6 F1 — Pulsanti comandi ─────────────────────────────────────────────
+
+  - name: "F1 V6 Start"
+    unique_id: ferm_v6_f1_cmd_start
+    command_topic: "fermentazione/v6/f1/ha/cmd/start"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-start","ts":0}'
+    qos: 1
+    icon: mdi:play-circle
+
+  - name: "F1 V6 Stop"
+    unique_id: ferm_v6_f1_cmd_stop
+    command_topic: "fermentazione/v6/f1/ha/cmd/stop"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-stop","ts":0,"reason":"manual"}'
+    qos: 1
+    icon: mdi:stop-circle
+
+  - name: "F1 V6 Reboot"
+    unique_id: ferm_v6_f1_cmd_reboot
+    command_topic: "fermentazione/v6/f1/ha/cmd/reboot"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-reboot","ts":0}'
+    qos: 1
+    icon: mdi:restart
+
+  # ── V6 F2 — Pulsanti comandi ───────────────────────────────────────────
+
+  - name: "F2 V6 Start"
+    unique_id: ferm_v6_f2_cmd_start
+    command_topic: "fermentazione/v6/f2/ha/cmd/start"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-start","ts":0}'
+    qos: 1
+    icon: mdi:play-circle
+
+  - name: "F2 V6 Stop"
+    unique_id: ferm_v6_f2_cmd_stop
+    command_topic: "fermentazione/v6/f2/ha/cmd/stop"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-stop","ts":0,"reason":"manual"}'
+    qos: 1
+    icon: mdi:stop-circle
+
+  - name: "F2 V6 Reboot"
+    unique_id: ferm_v6_f2_cmd_reboot
+    command_topic: "fermentazione/v6/f2/ha/cmd/reboot"
+    payload_press: '{"schema_version":"1.0","request_id":"ha-reboot","ts":0}'
+    qos: 1
+    icon: mdi:restart
+
+select:
+  # ── V6 F1 — Selezione algoritmo controllo ────────────────────────────────
+
+  - name: "F1 V6 Control Mode"
+    unique_id: ferm_v6_f1_control_mode_select
+    state_topic: "fermentazione/v6/f1/esp/state"
+    value_template: "{{ value_json.control_mode }}"
+    options:
+      - "on_off"
+      - "on_off_hyst_sym"
+      - "on_off_hyst_asym"
+      - "P"
+      - "PI"
+      - "PD"
+      - "PID"
+    command_topic: "fermentazione/v6/f1/ha/cmd/control_set"
+    command_template: >-
+      {"schema_version":"1.0","request_id":"ha-ctrl-{{ now().strftime('%H%M%S') }}",
+       "ts":{{ now()|as_timestamp|int }},"control_mode":"{{ value }}","params":{}}
+    qos: 1
+    icon: mdi:tune
+
+  # ── V6 F2 — Selezione algoritmo controllo ────────────────────────────────
+
+  - name: "F2 V6 Control Mode"
+    unique_id: ferm_v6_f2_control_mode_select
+    state_topic: "fermentazione/v6/f2/esp/state"
+    value_template: "{{ value_json.control_mode }}"
+    options:
+      - "on_off"
+      - "on_off_hyst_sym"
+      - "on_off_hyst_asym"
+      - "P"
+      - "PI"
+      - "PD"
+      - "PID"
+    command_topic: "fermentazione/v6/f2/ha/cmd/control_set"
+    command_template: >-
+      {"schema_version":"1.0","request_id":"ha-ctrl-{{ now().strftime('%H%M%S') }}",
+       "ts":{{ now()|as_timestamp|int }},"control_mode":"{{ value }}","params":{}}
+    qos: 1
+    icon: mdi:tune
+
+number:
+  # ── V5 — Temperatura standby ─────────────────────────────────────────────
+

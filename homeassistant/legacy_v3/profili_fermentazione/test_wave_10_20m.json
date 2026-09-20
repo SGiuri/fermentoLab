@@ -1,0 +1,49 @@
+{
+  "profilo": [
+    {
+      "step": "Test Hold Low 1",
+      "temp": 12,
+      "duration_days": 0.013889
+    },
+    {
+      "step": "Test Ramp Up 1",
+      "temp": 16,
+      "ramp_days": 0.006944
+    },
+    {
+      "step": "Test Hold High 1",
+      "temp": 16,
+      "duration_days": 0.013889
+    },
+    {
+      "step": "Test Ramp Down 1",
+      "temp": 12,
+      "ramp_days": 0.006944
+    },
+    {
+      "step": "Test Hold Low 2",
+      "temp": 12,
+      "duration_days": 0.013889
+    },
+    {
+      "step": "Test Ramp Up 2",
+      "temp": 15,
+      "ramp_days": 0.006944
+    },
+    {
+      "step": "Test Hold High 2",
+      "temp": 15,
+      "duration_days": 0.013889
+    },
+    {
+      "step": "Test Ramp Down 2",
+      "temp": 12,
+      "ramp_days": 0.006944
+    },
+    {
+      "step": "Test Hold Low Finale",
+      "temp": 12,
+      "duration_days": 0.013889
+    }
+  ]
+}

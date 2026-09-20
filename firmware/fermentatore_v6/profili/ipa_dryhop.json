@@ -1,0 +1,34 @@
+{
+  "profilo": [
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 19,
+      "duration_days": 5
+    },
+    {
+      "step": "Rampa Dry Hop",
+      "temp": 21,
+      "ramp_days": 1
+    },
+    {
+      "step": "Dry Hopping",
+      "temp": 21,
+      "duration_days": 4
+    },
+    {
+      "step": "Rampa Cold Crash",
+      "temp": 4,
+      "ramp_days": 1
+    },
+    {
+      "step": "Cold Crash",
+      "temp": 4,
+      "duration_days": 3
+    },
+    {
+      "step": "Attesa Imbottigliamento",
+      "temp": 4,
+      "duration_days": 30
+    }
+  ]
+}

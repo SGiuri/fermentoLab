@@ -1,0 +1,486 @@
+- id: '1770208960967'
+  alias: Scenario Lavoro
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: smart_home_scenario
+  conditions: []
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.stato_casa_ai
+    data:
+      value: '{{ trigger.event.data.tag }}'
+  mode: single
+- id: v6_f1_reinvia_profilo_su_reconnect
+  alias: V6 F1 — Reinvia profilo su reconnect
+  description: 'Quando l''ESP32 V6 F1 torna online: in RUNNING/HOLDING registra solo
+    il modo ripristinato dal firmware (da 6.2.0 modo, guadagni e isteresi sono in
+    NVS; reinviare i valori di HA applicherebbe modifiche non confermate con ''Applica'');
+    se era in corso ed è fermo avvisa di premere AVVIA. mode single.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.f1_v6_online
+    to: 'on'
+    for:
+      seconds: 10
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ states(''sensor.f1_v6_fsm'') in [''RUNNING'', ''HOLDING'']
+          }}'
+      sequence:
+      - action: system_log.write
+        data:
+          level: info
+          message: 'V6 F1: ESP32 tornato online in {{ states(''sensor.f1_v6_fsm'')
+            }} con modo {{ states(''sensor.f1_v6_modo_controllo_attivo'') }} (ripristinato
+            da NVS, firmware >= 6.2.0).'
+    default:
+    - choose:
+      - conditions:
+        - condition: state
+          entity_id: input_select.f1_v6_stato_controllo
+          state: in_corso
+        sequence:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.f1_v6_stato_controllo
+          data:
+            option: idle
+        - action: persistent_notification.create
+          data:
+            title: 'F1 V6: ESP32 riconnesso — Riavvia fermentazione'
+            message: 'L''ESP32 F1 è tornato online in stato STOPPED. Il profilo precedente
+              (''{{ states(''input_text.f1_v6_profilo_attivo'') }}'') non viene ripristinato
+              automaticamente dopo un aggiornamento firmware (NVS azzerato).
+
+              Premi **AVVIA** per reinviare il profilo e riprendere.
+
+              '
+            notification_id: f1_v6_reconnect_ripristino
+        - action: system_log.write
+          data:
+            level: warning
+            message: 'V6 F1: ESP32 tornato online in STOPPED con stato HA in_corso.
+              Stato resettato a idle. Profilo precedente: {{ states(''input_text.f1_v6_profilo_attivo'')
+              }}.'
+      default:
+      - action: system_log.write
+        data:
+          level: info
+          message: 'V6 F1: ESP32 tornato online in STOPPED/STANDBY, nessuna fermentazione
+            da ripristinare.'
+  mode: single
+- id: v6_f1_ack_avvio_ricevuto
+  alias: F1 V6 - ACK Avvio Profilo
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f1/esp/ack
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.status == ''ok'' and trigger.payload_json.get(''cmd'')
+      == ''start'' }}'
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f1_v6_profilo_attivo
+    data:
+      value: '{{ trigger.payload_json.profilo }}'
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: system_log.write
+    data:
+      level: info
+      message: 'F1 V6 ACK: fermentazione avviata profilo={{ trigger.payload_json.profilo
+        }}'
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Fermentazione Avviata'
+      message: 'ESP32 ha confermato avvio profilo: {{ trigger.payload_json.profilo
+        }}. Modo controllo: {{ states(''input_select.f1_v6_modo_controllo'') }}. Il
+        termostato è ora autonomo.
+
+        '
+      notification_id: f1_v6_ack_avvio
+  mode: queued
+  max: 5
+- id: v6_f1_profilo_completato
+  alias: F1 V6 - Profilo Completato
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f1/esp/ack
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.get(''event'') == ''profilo_completato''
+      }}'
+  actions:
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f1_v6_stato_controllo
+    data:
+      option: idle
+  - action: notify.fermentazione_email
+    data:
+      title: '[OK] F1 V6 - Fermentazione Completata'
+      message: 'FERMENTAZIONE COMPLETATA — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        Profilo: {{ trigger.payload_json.profilo }} Ore totali: {{ states(''sensor.f1_v6_ore_totali'')
+        }}h Modo controllo: {{ states(''sensor.f1_v6_modo_controllo_attivo'') }}
+
+        L''ESP32 è ora in modalità HOLDING alla temperatura finale.
+
+        '
+  - action: persistent_notification.create
+    data:
+      title: 'F1 V6: Profilo Completato'
+      message: 'Profilo {{ trigger.payload_json.profilo }} completato! ESP32 in HOLDING.
+
+        '
+      notification_id: f1_v6_profilo_completato
+  mode: single
+- id: v6_f1_allarme_sensore
+  alias: F1 V6 - Allarme Sensore Temperatura
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f1/esp/alarm
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.tipo == ''sensore_offline'' }}'
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[ALLARME] F1 V6 - Sensore DS18B20 Offline'
+      message: 'ALLARME FERMENTATORE F1 V6 — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        Il sensore DS18B20 non risponde da {{ trigger.payload_json.durata_minuti }}
+        minuti. I relè sono stati spenti (fail-safe).
+
+        Profilo attivo: {{ states(''input_text.f1_v6_profilo_attivo'') }} Ore trascorse:  {{
+        states(''sensor.f1_v6_ore_totali'') }}h Modo controllo: {{ states(''sensor.f1_v6_modo_controllo_attivo'')
+        }}
+
+        '
+  mode: single
+- id: v6_f1_esp32_watchdog
+  alias: F1 V6 - Watchdog ESP32 Non Pubblica
+  triggers:
+  - trigger: state
+    entity_id: sensor.f1_v6_temperatura
+    to: unavailable
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: sensor.f1_v6_temperatura
+    to: unknown
+    for:
+      minutes: 5
+  conditions:
+  - condition: template
+    value_template: "{{ states('input_text.f1_v6_profilo_attivo') not in\n   ['Nessuno',
+      '', 'unknown', 'unavailable'] }}\n"
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[ALLARME] F1 V6 - ESP32 Non Raggiungibile'
+      message: 'ALLARME FERMENTATORE F1 V6 — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        L''ESP32 ha smesso di pubblicare dati MQTT da più di 5 minuti. Profilo attivo:
+        {{ states(''input_text.f1_v6_profilo_attivo'') }}
+
+        Verificare alimentazione, WiFi e firmware ESP32.
+
+        '
+  mode: single
+- id: v6_f1_notifica_offline
+  alias: F1 V6 - Notifica ESP32 Offline
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.f1_v6_online
+    to: 'off'
+  conditions: []
+  actions:
+  - action: persistent_notification.create
+    data:
+      title: 'Fermentatore F1 V6: ESP32 offline'
+      message: 'L''ESP32 V6 ha perso la connessione MQTT. Profilo attivo: {{ states(''input_text.f1_v6_profilo_attivo'')
+        | default(''nessuno'') }}. Al riavvio, HA reinvierà automaticamente il profilo.
+
+        '
+      notification_id: f1_v6_offline
+  mode: single
+- id: v6_f1_reset_conferma_stop
+  alias: F1 V6 - Auto-Reset Conferma Stop
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.f1_v6_conferma_stop
+    to: 'on'
+    for:
+      seconds: 30
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.f1_v6_conferma_stop
+  - action: persistent_notification.dismiss
+    data:
+      notification_id: f1_v6_conferma_stop_pending
+  mode: single
+- id: v6_f2_reinvia_profilo_su_reconnect
+  alias: V6 F2 — Reinvia profilo su reconnect
+  description: "Quando l'ESP32 V6 F2 torna online gestisce tre scenari: 1. Autotune
+    in corso → notifica utente. 2. FSM=RUNNING (profilo ripristinato da NVS ma control_mode
+    resettato al\n   default) → reinvia solo control_set per ripristinare PI/PID.\n3.
+    FSM=STANDBY/STOPPED → reinvia profilo. CRITICO: mode single per evitare doppie
+    risposte su riconnessioni ravvicinate.\n"
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.f2_v6_online
+    to: 'on'
+    for:
+      seconds: 10
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ states(''sensor.f2_v6_fsm'') == ''RUNNING'' }}'
+      sequence:
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/cmd/control_set
+          payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-reconnect-ctrl-{{
+            now().strftime('%H%M%S') }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n
+            \"control_mode\":\"{{ 'on_off_hyst_sym' if states('input_select.f2_v6_modo_controllo')
+            == 'on_off_isteresi' else states('input_select.f2_v6_modo_controllo')
+            }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f2_v6_kp_risc')
+            | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f2_v6_ki_risc')
+            | float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f2_v6_kd_risc')
+            | float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f2_v6_kp_frigo')
+            | float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f2_v6_ki_frigo')
+            | float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f2_v6_kd_frigo')
+            | float(0.0) }}\n }}"
+          qos: 1
+          retain: false
+      - action: system_log.write
+        data:
+          level: info
+          message: 'V6 F2: ESP tornato online in RUNNING (NVS ha ripristinato il profilo
+            ''{{ states(''input_text.f2_v6_profilo_attivo'') }}'' ma perso control_mode).
+            Reinviato control_set modo={{ states(''input_select.f2_v6_modo_controllo'')
+            }}.'
+    default:
+    - action: script.f2_v6_invia_profilo
+    - action: system_log.write
+      data:
+        level: info
+        message: 'V6 F2: ESP32 tornato online in STANDBY/STOPPED, profilo reinviato
+          automaticamente.'
+  mode: single
+- id: v6_f2_ack_avvio_ricevuto
+  alias: F2 V6 - ACK Avvio Profilo
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f2/esp/ack
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.status == ''ok'' }}'
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.f2_v6_profilo_attivo
+    data:
+      value: '{{ trigger.payload_json.profilo }}'
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.f2_v6_stato_controllo
+    data:
+      option: in_corso
+  - action: persistent_notification.create
+    data:
+      title: 'F2 V6: Fermentazione Avviata'
+      message: 'ESP32 F2 ha confermato avvio profilo: {{ trigger.payload_json.profilo
+        }}. Modo controllo: {{ states(''input_select.f2_v6_modo_controllo'') }}.
+
+        '
+      notification_id: f2_v6_ack_avvio
+  mode: queued
+  max: 5
+- id: v6_f2_profilo_completato
+  alias: F2 V6 - Profilo Completato
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f2/esp/ack
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.state in [''stopped'', ''holding''] and
+      trigger.payload_json.status == ''ok'' }}'
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[OK] F2 V6 - Fermentazione Completata'
+      message: 'FERMENTAZIONE F2 COMPLETATA — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        Profilo: {{ trigger.payload_json.profilo }} Ore totali: {{ states(''sensor.f2_v6_ore_totali'')
+        }}h Modo controllo: {{ states(''sensor.f2_v6_modo_controllo_attivo'') }}
+
+        '
+  - action: persistent_notification.create
+    data:
+      title: 'F2 V6: Profilo Completato'
+      message: Profilo {{ trigger.payload_json.profilo }} completato! ESP32 F2 in
+        HOLDING.
+      notification_id: f2_v6_profilo_completato
+  mode: single
+- id: v6_f2_allarme_sensore
+  alias: F2 V6 - Allarme Sensore Temperatura
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f2/esp/alarm
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.tipo == ''sensore_offline'' }}'
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[ALLARME] F2 V6 - Sensore DS18B20 Offline'
+      message: 'ALLARME FERMENTATORE F2 V6 — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        Il sensore DS18B20 non risponde da {{ trigger.payload_json.durata_minuti }}
+        minuti. I relè sono stati spenti (fail-safe).
+
+        Profilo attivo: {{ states(''input_text.f2_v6_profilo_attivo'') }} Ore trascorse:  {{
+        states(''sensor.f2_v6_ore_totali'') }}h
+
+        '
+  mode: single
+- id: v6_f2_esp32_offline_lwt
+  alias: F2 V6 - ESP32 Offline (LWT)
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f2/esp/alarm
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.tipo == ''esp32_offline'' }}'
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[ALLARME] F2 V6 - ESP32 Disconnesso Imprevistamente'
+      message: 'ALLARME FERMENTATORE F2 V6 — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        L''ESP32 F2 si è disconnesso dal broker MQTT senza avvisare. Profilo attivo:
+        {{ states(''input_text.f2_v6_profilo_attivo'') }}
+
+        '
+  mode: single
+- id: v6_f2_esp32_watchdog
+  alias: F2 V6 - Watchdog ESP32 Non Pubblica
+  triggers:
+  - trigger: state
+    entity_id: sensor.f2_v6_temperatura
+    to: unavailable
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: sensor.f2_v6_temperatura
+    to: unknown
+    for:
+      minutes: 5
+  conditions:
+  - condition: template
+    value_template: "{{ states('input_text.f2_v6_profilo_attivo') not in\n   ['Nessuno',
+      '', 'unknown', 'unavailable'] }}\n"
+  actions:
+  - action: notify.fermentazione_email
+    data:
+      title: '[ALLARME] F2 V6 - ESP32 Non Raggiungibile'
+      message: 'ALLARME FERMENTATORE F2 V6 — {{ now().strftime(''%Y-%m-%d %H:%M:%S'')
+        }}
+
+        L''ESP32 F2 ha smesso di pubblicare dati MQTT da più di 5 minuti. Profilo
+        attivo: {{ states(''input_text.f2_v6_profilo_attivo'') }}
+
+        '
+  mode: single
+- id: v6_f2_notifica_offline
+  alias: F2 V6 - Notifica ESP32 Offline
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.f2_v6_online
+    to: 'off'
+  conditions: []
+  actions:
+  - action: persistent_notification.create
+    data:
+      title: 'Fermentatore F2 V6: ESP32 offline'
+      message: 'L''ESP32 V6 F2 ha perso la connessione MQTT. Profilo attivo: {{ states(''input_text.f2_v6_profilo_attivo'')
+        | default(''nessuno'') }}. Al riavvio, HA reinvierà automaticamente il profilo.
+
+        '
+      notification_id: f2_v6_offline
+  mode: single
+- id: v6_f2_mode_watchdog
+  alias: V6 F2 — Watchdog control_mode
+  description: 'Invia control_set se esp/state riporta un control_mode diverso da
+    quello desiderato. Gestisce il fallback su on_off_hyst_sym dopo ogni reboot.
+
+    '
+  triggers:
+  - trigger: mqtt
+    topic: fermentazione/v6/f2/esp/state
+  conditions:
+  - condition: template
+    value_template: "{% set reported  = trigger.payload_json.get('control_mode', '')
+      %} {% set ha_mode   = states('input_select.f2_v6_modo_controllo') %} {% set
+      desired   = 'on_off_hyst_sym' if ha_mode == 'on_off_isteresi' else ha_mode %}
+      {{ trigger.payload_json.get('stato_fsm') == 'RUNNING'\n   and reported != desired\n
+      \  and is_state('input_select.f2_v6_stato_controllo', 'in_corso') }}"
+  actions:
+  - action: mqtt.publish
+    data:
+      topic: fermentazione/v6/f2/ha/cmd/control_set
+      payload: "{\"schema_version\":\"1.0\",\"request_id\":\"f2-wdg-{{ now().strftime('%H%M%S')
+        }}\",\n \"ts\":{{ now()|as_timestamp|int }},\n \"control_mode\":\"{{ 'on_off_hyst_sym'
+        if states('input_select.f2_v6_modo_controllo') == 'on_off_isteresi' else states('input_select.f2_v6_modo_controllo')
+        }}\",\n \"params\":{\n   \"kp_heat\":{{ states('input_number.f2_v6_kp_risc')
+        | float(5.0) }},\n   \"ki_heat\":{{ states('input_number.f2_v6_ki_risc') |
+        float(0.005) }},\n   \"kd_heat\":{{ states('input_number.f2_v6_kd_risc') |
+        float(0.0) }},\n   \"kp_cool\":{{ states('input_number.f2_v6_kp_frigo') |
+        float(1.0) }},\n   \"ki_cool\":{{ states('input_number.f2_v6_ki_frigo') |
+        float(0.001) }},\n   \"kd_cool\":{{ states('input_number.f2_v6_kd_frigo')
+        | float(0.0) }}\n }}"
+      qos: 1
+      retain: false
+  - action: system_log.write
+    data:
+      level: warning
+      message: "V6 F2 watchdog: control_mode mismatch (ESP={{ trigger.payload_json.get('control_mode')
+        }},\n desiderato={{ states('input_select.f2_v6_modo_controllo') }}).\nCorretto
+        con control_set."
+  mode: single
+- id: v6_f2_reset_conferma_stop
+  alias: F2 V6 - Auto-Reset Conferma Stop
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.f2_v6_conferma_stop
+    to: 'on'
+    for:
+      seconds: 30
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.f2_v6_conferma_stop
+  - action: persistent_notification.dismiss
+    data:
+      notification_id: f2_v6_conferma_stop_pending
+  mode: single

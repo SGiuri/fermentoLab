@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "project": "fermentatore_v6",
+  "firmware_version": "6.1.4",
+  "build_channel": "dev",
+  "default_target": {
+    "hardware_target": "esp32-wroom",
+    "fermenter_id": "f1"
+  },
+  "targets": [
+    {
+      "id": "wroom-f1",
+      "hardware_target": "esp32-wroom",
+      "fermenter_id": "f1"
+    },
+    {
+      "id": "wroom-f2",
+      "hardware_target": "esp32-wroom",
+      "fermenter_id": "f2"
+    },
+    {
+      "id": "s3-f1",
+      "hardware_target": "esp32-s3-supermini",
+      "fermenter_id": "f1"
+    },
+    {
+      "id": "s3-f2",
+      "hardware_target": "esp32-s3-supermini",
+      "fermenter_id": "f2"
+    }
+  ]
+}

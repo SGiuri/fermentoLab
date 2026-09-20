@@ -1,0 +1,257 @@
+# ============================================================
+# AUTOMATIONS V3 — Fermentatore F1
+# Gestione allarmi, notifiche email, watchdog ESP32, log ACK
+# Modello PULL: automazione chiave = v3_f1_rispondi_richiesta_profilo
+# ============================================================
+
+# --- Allarme: sensore DS18B20 offline ---
+- id: 'v3_f1_allarme_sensore_email'
+  alias: F1 V3 - Allarme Sensore Temperatura
+  description: Invia email quando ESP32 segnala errore al sensore DS18B20.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/allarme
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.tipo == 'sensore_offline' }}"
+  actions:
+    - action: notify.fermentazione_email
+      data:
+        title: "[ALLARME] F1 - Sensore Temperatura Offline"
+        message: >
+          ALLARME FERMENTATORE F1 — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          Il sensore DS18B20 non risponde da {{ trigger.payload_json.durata_minuti }} minuti.
+          Il termostato ha spento riscaldatore e refrigeratore per sicurezza (fail-safe).
+
+          Profilo attivo: {{ states('input_text.f1_profilo_attivo') }}
+
+          Azioni richieste:
+          - Verificare connessione fisica DS18B20 (pin 4)
+          - Verificare alimentazione ESP32
+          - Verificare rete WiFi
+  mode: single
+
+# --- Watchdog: ESP32 non pubblica dati ---
+# (Nota V3: l'automazione sensore_ripristinato è stata rimossa perché
+#  in V3 l'ESP32 si riavvia al posto del ripristino automatico.)
+- id: 'v3_f1_esp32_disconnesso_email'
+  alias: F1 V3 - ESP32 Disconnesso
+  description: >
+    Notifica email se sensor.f1_temperatura_reale diventa unavailable/unknown
+    (expire_after scattato) mentre un profilo è attivo.
+  triggers:
+    - trigger: state
+      entity_id: sensor.f1_temperatura_reale
+      to: unavailable
+      for:
+        minutes: 5
+    - trigger: state
+      entity_id: sensor.f1_temperatura_reale
+      to: unknown
+      for:
+        minutes: 5
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('input_text.f1_profilo_attivo') not in
+           ['Nessuno', 'unknown', 'unavailable', 'none', ''] }}
+  actions:
+    - action: notify.fermentazione_email
+      data:
+        title: "[ALLARME] F1 - ESP32 Non Raggiungibile"
+        message: >
+          ALLARME FERMENTATORE F1 — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          L'ESP32 ha smesso di pubblicare dati MQTT da più di 5 minuti.
+
+          Profilo attivo: {{ states('input_text.f1_profilo_attivo') }}
+
+          Possibili cause:
+          - Interruzione alimentazione ESP32
+          - Perdita connessione WiFi
+          - Crash firmware
+
+          Verificare fisicamente lo stato dell'ESP32.
+  mode: single
+
+# --- Log ACK avvio profilo ---
+- id: 'v3_f1_ack_avvio_ricevuto'
+  alias: F1 V3 - ACK Avvio Ricevuto
+  description: Quando ESP32 conferma l'avvio, aggiorna input_text e notifica.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/ack
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.stato == 'avviato' }}"
+  actions:
+    - action: system_log.write
+      data:
+        level: info
+        message: >
+          F1 V2 ACK avviato — profilo: {{ trigger.payload_json.profilo }}
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.f1_profilo_attivo
+      data:
+        value: "{{ trigger.payload_json.profilo }}"
+    - action: persistent_notification.create
+      data:
+        title: "F1: Fermentazione Avviata"
+        message: >
+          ESP32 ha confermato ricezione del profilo: {{ trigger.payload_json.profilo }}.
+          Il termostato è ora autonomo.
+        notification_id: f1_v3_ack_avvio
+  mode: queued
+  max: 5
+
+# --- Log ACK stop ---
+- id: 'v3_f1_ack_stop_ricevuto'
+  alias: F1 V3 - ACK Stop Ricevuto
+  description: Quando ESP32 conferma lo stop, aggiorna lo stato HA.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/ack
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.stato == 'fermato' }}"
+  actions:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.f1_profilo_attivo
+      data:
+        value: "Nessuno"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.f1_avvio_epoch
+      data:
+        value: 0
+    - action: persistent_notification.create
+      data:
+        title: "F1: Fermentazione Fermata"
+        message: "ESP32 ha confermato lo stop del processo."
+        notification_id: f1_v3_ack_stop
+  mode: single
+
+# --- ESP32 offline (LWT broker) ---
+- id: 'v3_f1_esp32_offline_lwt'
+  alias: F1 V3 - ESP32 Offline (LWT)
+  description: >
+    Email immediata quando il broker MQTT segnala la disconnessione imprevista
+    dell'ESP32 (Last Will Testament).
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/allarme
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.tipo == 'esp32_offline' }}"
+  actions:
+    - action: notify.fermentazione_email
+      data:
+        title: "[ALLARME] F1 - ESP32 Offline"
+        message: >
+          ALLARME FERMENTATORE F1 — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          L'ESP32 si è disconnesso inaspettatamente dal broker MQTT (LWT).
+
+          Profilo attivo: {{ states('input_text.f1_profilo_attivo') }}
+
+          Possibili cause:
+          - Interruzione alimentazione ESP32
+          - Reset/crash del firmware
+          - Perdita WiFi prolungata
+
+          Verificare fisicamente lo stato dell'ESP32.
+  mode: single
+
+# --- Profilo fermentazione completato ---
+- id: 'v3_f1_profilo_completato'
+  alias: F1 V3 - Profilo Fermentazione Completato
+  description: Email quando l'ESP32 ha terminato tutti gli step del profilo.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/ack
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.stato == 'profilo_completato' }}"
+  actions:
+    - action: notify.fermentazione_email
+      data:
+        title: "[OK] F1 - Fermentazione Completata"
+        message: >
+          FERMENTAZIONE COMPLETATA — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          Il profilo '{{ trigger.payload_json.profilo }}' ha completato
+          tutti gli step pianificati.
+
+          L'ESP32 mantiene la temperatura dell'ultimo step finché non
+          riceve il comando di stop.
+
+          Temperatura attuale: {{ states('sensor.f1_temperatura_reale') }}°C
+          Setpoint:            {{ states('sensor.f1_setpoint_corrente') }}°C
+    - action: persistent_notification.create
+      data:
+        title: "F1: Fermentazione Completata!"
+        message: >
+          Profilo '{{ trigger.payload_json.profilo }}' completato.
+          Temperatura: {{ states('sensor.f1_temperatura_reale') }}°C
+        notification_id: f1_v3_profilo_completato
+  mode: single
+
+# --- [NUOVO V3] Risposta automatica alla richiesta profilo dell'ESP32 ---
+# Questa è l'automazione più critica del modello PULL.
+# L'ESP32 pubblica su richiedi_profilo all'avvio; HA deve rispondere entro 15s.
+- id: 'v3_f1_rispondi_richiesta_profilo'
+  alias: F1 V3 - Rispondi Richiesta Profilo
+  description: >
+    Risponde alla richiesta profilo dell'ESP32 dopo ogni avvio o riavvio.
+    Se un profilo è attivo invia il JSON completo con l'epoch originale;
+    altrimenti segnala nessun_profilo.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/richiedi_profilo
+  actions:
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ states('input_text.f1_profilo_attivo') not in
+                   ['Nessuno', '', 'unknown', 'unavailable', 'none'] }}
+          sequence:
+            - action: script.f1_avvia_fermentazione
+              data:
+                profilo_nome: "{{ states('input_text.f1_profilo_attivo') }}"
+                avvio_epoch: "{{ states('input_number.f1_avvio_epoch') | int }}"
+      default:
+        - action: mqtt.publish
+          data:
+            topic: fermentazione/f1/cmd/profilo
+            payload: '{"stato":"nessun_profilo","temp_standby":18.0}'
+            qos: 1
+  mode: single
+
+# --- [NUOVO V3] Notifica email riavvio ESP32 per allarme sensore ---
+- id: 'v3_f1_riavvio_in_corso'
+  alias: F1 V3 - ESP32 Riavvio in Corso
+  description: Email informativa quando l'ESP32 sta per riavviarsi per allarme sensore.
+  triggers:
+    - trigger: mqtt
+      topic: fermentazione/f1/allarme
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.payload_json.tipo == 'riavvio_in_corso' }}"
+  actions:
+    - action: notify.fermentazione_email
+      data:
+        title: "[INFO] F1 - Riavvio ESP32 in Corso"
+        message: >
+          INFO FERMENTATORE F1 — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          L'ESP32 si sta riavviando a causa di un allarme sensore.
+          La fermentazione riprende automaticamente al riavvio.
+
+          Profilo attivo: {{ states('input_text.f1_profilo_attivo') }}
+          Ore totali: {{ states('sensor.f1_ore_totali') }}h
+          Temperatura rilevata: {{ states('sensor.f1_temperatura_reale') }}°C
+  mode: single

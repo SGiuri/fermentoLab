@@ -1,0 +1,319 @@
+================================================================================
+PROGETTO: TERMOSTATO FERMENTAZIONE V2 - CONTROLLO AUTONOMO ESP32
+Data: 22 aprile 2026
+================================================================================
+
+MOTIVAZIONE
+-----------
+Il sistema attuale (V1) è fragile perché l'ESP32 dipende da Home Assistant (via
+Node-RED) per ricevere il setpoint ogni ora. Se HA si riavvia, Node-RED crasha
+o la rete ha problemi, il processo di fermentazione si ferma o va fuori controllo.
+
+Nel progetto V2 l'ESP32 diventa autonomo: riceve il profilo completo una sola
+volta all'avvio, poi gestisce tempi e transizioni in locale, senza dipendere da HA
+per la logica di controllo. HA resta il pannello di monitoraggio e avvio.
+
+
+================================================================================
+ARCHITETTURA V2
+================================================================================
+
+  [Home Assistant]
+      |
+      |  (1) Invio profilo JSON completo (MQTT, una tantum)
+      v
+  [ESP32 - Termostato Autonomo]
+      |
+      |  (2) ACK ricezione + avvio processo
+      |  (3) Aggiornamento stato periodico (MQTT, ogni ~60s)
+      |  (4) Allarme sensore guasto (MQTT, evento)
+      v
+  [Home Assistant]  -->  (5) Email di allarme via SMTP
+
+
+FLUSSO DETTAGLIATO
+------------------
+
+Step 1 — AVVIO DA HA
+  L'operatore seleziona il profilo (es. "Lager Generica") e preme
+  "Avvia Fermentazione". HA legge il file JSON del profilo e pubblica il
+  contenuto completo sul topic MQTT di comando, aggiungendo timestamp di avvio.
+
+Step 2 — ACK ESP32
+  L'ESP32 riceve il profilo, lo salva in memoria (preferibilmente SPIFFS/NVS
+  per sopravvivere a reset), risponde con un messaggio di conferma sul topic ACK.
+  HA registra il log di conferma e aggiorna il sensore "stato fermentazione".
+
+Step 3 — AUTONOMIA ESP32
+  L'ESP32 gestisce internamente:
+  - Il calcolo del setpoint corrente basato su step + tempo trascorso
+  - Le rampe di temperatura (interpolazione lineare tra step e step)
+  - Il controllo on/off di riscaldatore e refrigeratore con isteresi
+  - La protezione compressore (min_cycle_duration)
+  - Il watchdog del sensore di temperatura (DS18B20 o NTC)
+  
+  Ogni 60 secondi pubblica su MQTT lo stato:
+  {
+    "temp_reale": 11.4,
+    "setpoint": 11.0,
+    "step_nome": "Fermentazione Primaria",
+    "step_index": 0,
+    "ore_step": 48,
+    "ore_totali": 48,
+    "riscaldatore": false,
+    "refrigeratore": true,
+    "allarme": false,
+    "profilo": "lager_generica"
+  }
+
+Step 4 — ALLARME SENSORE
+  Se il sensore di temperatura restituisce un valore non valido per più di
+  N minuti (configurabile, es. 5 minuti):
+  - L'ESP32 spegne sia riscaldatore che refrigeratore (fail-safe)
+  - Pubblica un messaggio di allarme sul topic MQTT dedicato
+  - Continua a monitorare e si auto-ripristina quando il sensore torna valido
+
+Step 5 — NOTIFICA EMAIL (da HA)
+  HA riceve il messaggio di allarme via MQTT, aggiorna il binary_sensor di
+  allarme e triggera un'automazione che invia l'email via notify.fermentazione_email.
+
+
+================================================================================
+TOPIC MQTT — PROTOCOLLO
+================================================================================
+
+DIREZIONE HA --> ESP32:
+
+  fermentazione/f1/cmd/avvia
+    Payload JSON: profilo completo + timestamp avvio
+    {
+      "profilo": "lager_generica",
+      "avvio_epoch": 1745000000,
+      "steps": [
+        {"step": "Fermentazione Primaria", "temp": 11, "duration_hours": 240},
+        {"step": "Rampa Diacetile",        "temp": 16, "ramp_hours": 48},
+        {"step": "Diacetyl Rest",          "temp": 16, "duration_hours": 72},
+        {"step": "Discesa Lagerizzazione", "temp": 2,  "ramp_hours": 120},
+        {"step": "Lagerizzazione",         "temp": 2,  "duration_hours": 672}
+      ],
+      "isteresi": 0.3,
+      "min_cycle_minutes": 5,
+      "allarme_timeout_minuti": 5
+    }
+
+    NOTA: Le duration_days/ramp_days dei JSON esistenti vanno convertite
+    in duration_hours/ramp_hours al momento dell'invio (days * 24).
+
+  fermentazione/f1/cmd/stop
+    Payload: {"motivo": "operatore"}
+    Ferma il processo. ESP32 spegne gli attuatori e risponde con ACK.
+
+  fermentazione/f1/cmd/ping
+    Payload: {} — verifica connettività ESP32.
+
+DIREZIONE ESP32 --> HA:
+
+  fermentazione/f1/ack
+    Risposta a cmd/avvia o cmd/stop con stato e profilo ricevuto.
+    {"stato": "avviato", "profilo": "lager_generica", "ts": 1745000001}
+
+  fermentazione/f1/stato
+    Aggiornamento periodico (ogni 60s), struttura come descritta sopra.
+
+  fermentazione/f1/allarme
+    Evento di errore sensore.
+    {"tipo": "sensore_offline", "durata_minuti": 6, "ts": 1745001000}
+    {"tipo": "sensore_ripristinato", "ts": 1745001600}
+
+  fermentazione/f1/pong
+    Risposta al ping.
+    {"free_heap": 45000, "uptime_s": 3600, "wifi_rssi": -58}
+
+
+================================================================================
+STRUTTURA FILE DEL NUOVO PROGETTO
+================================================================================
+
+nuovo_progetto_fermentazione/
+│
+├── homeassistant/                    ← configurazione HA per il nuovo sistema
+│   ├── configuration.yaml            ← DA CREARE (nuovo, più snello)
+│   ├── secrets.yaml                  ← DA COPIARE (invariato)
+│   ├── mqtt.yaml                     ← DA CREARE (nuovi topic V2)
+│   ├── automations.yaml              ← DA CREARE (solo allarme email + log)
+│   ├── scripts.yaml                  ← DA CREARE (avvia/stop fermentazione)
+│   ├── sensors.yaml                  ← DA CREARE (sensori da topic MQTT V2)
+│   ├── templates.yaml                ← DA CREARE (template sensori derivati)
+│   ├── influxdb.yaml                 ← DA COPIARE (identico)
+│   └── profili_fermentazione/        ← DA COPIARE TUTTA LA CARTELLA (invariati)
+│       ├── ale_generica.json
+│       ├── czech_pils_W34.json
+│       ├── ipa_dryhop.json
+│       ├── lager_generica.json
+│       ├── stout_US04.json
+│       └── ...
+│
+└── esp32_firmware/                   ← DA CREARE COMPLETAMENTE
+    ├── main.cpp (o main.ino)
+    ├── profilo.h                     ← struttura dati profilo
+    ├── termostato.h/.cpp             ← logica controllo temperatura
+    ├── mqtt_client.h/.cpp            ← gestione MQTT
+    ├── watchdog_sensore.h/.cpp       ← watchdog DS18B20
+    └── config.h                      ← parametri WiFi, MQTT broker, pin
+
+
+================================================================================
+FILE DA COPIARE DAL PROGETTO ATTUALE (invariati o quasi)
+================================================================================
+
+1. secrets.yaml
+   → Contiene credenziali SMTP (smtp_server, smtp_port, smtp_sender,
+     smtp_recipient) e altre password. Copiare invariato.
+   ATTENZIONE: rimuovere le voci non più necessarie nella V2 (es. variabili
+   legate a Node-RED o al vecchio termostato dual_smart_thermostat).
+
+2. influxdb.yaml
+   → La configurazione di InfluxDB per la storicizzazione può restare uguale,
+     adattando solo i nomi degli entity_id se cambiano.
+
+3. profili_fermentazione/ (tutta la cartella con tutti i JSON)
+   → I profili sono la documentazione delle curve di fermentazione, riutilizzabili
+     direttamente. Lo script HA di avvio leggerà questi file e li convertirà
+     nel formato da inviare all'ESP32 (days → hours).
+
+FILE DA NON COPIARE (logica obsoleta V1):
+
+- climates.yaml                       → rimosso: dual_smart_thermostat non serve più
+- climates/fermentatore_1.yaml        → rimosso
+- custom_components/dual_smart_thermostat/ → rimosso
+- automations.yaml (vecchio)          → rimosso: le automazioni V1 dipendono
+                                         da Node-RED e dal vecchio termostato
+- command_line.yaml                   → valutare: tenere solo le parti non legate
+                                         alla fermentazione V1
+- templates.yaml (vecchio)            → rimosso: i template V1 calcolano setpoint
+                                         orari, funzione ora spostata su ESP32
+
+
+================================================================================
+COSA DEVE FARE L'ESP32 (firmware) — SPECIFICHE
+================================================================================
+
+1. SALVATAGGIO PROFILO IN MEMORIA NON VOLATILE
+   - Alla ricezione di cmd/avvia, salvare il JSON del profilo in NVS o SPIFFS
+   - Al boot, se esiste un profilo salvato con stato "in_esecuzione", riprendere
+     automaticamente il processo dal punto corretto (basandosi su timestamp NTP)
+
+2. CALCOLO SETPOINT
+   - Per ogni step con "duration_hours": temperatura costante per tutta la durata
+   - Per ogni step con "ramp_hours": interpolazione lineare tra la temp dello step
+     precedente e quella corrente, distribuita nelle ore della rampa
+   - Il setpoint corrente = f(tempo_trascorso_dall_avvio, lista_steps)
+
+3. CONTROLLO ON/OFF CON ISTERESI
+   - Se temp_reale < setpoint - isteresi: accendi riscaldatore, spegni refrigeratore
+   - Se temp_reale > setpoint + isteresi: spegni riscaldatore, accendi refrigeratore
+   - Altrimenti: nessuna azione (zona neutra)
+   - Rispettare min_cycle_minutes per il refrigeratore (protezione compressore)
+
+4. WATCHDOG SENSORE
+   - Se DS18B20 restituisce 85.0°C (errore noto) o valori fuori range (-10 / +40°C)
+     per più di allarme_timeout_minuti: spegni tutto + pubblica allarme MQTT
+   - Quando il sensore torna valido: pubblica sensore_ripristinato + riprendi controllo
+
+5. NTP
+   - Sincronizzare l'orario via NTP al boot per garantire il calcolo dei tempi
+   - Gestire il caso di mancata sincronizzazione (fallback su uptime interno)
+
+6. HEARTBEAT
+   - Pubblicare lo stato su fermentazione/f1/stato ogni 60 secondi anche se
+     non ci sono cambiamenti, per permettere a HA di rilevare connessioni perse
+     (expire_after sul sensore MQTT di HA)
+
+
+================================================================================
+COSA DEVE FARE HOME ASSISTANT (V2) — SPECIFICHE
+================================================================================
+
+1. INPUT PER SELEZIONE PROFILO
+   input_select.f1_profilo_scelto con le opzioni = nomi dei file JSON
+
+2. SCRIPT "AVVIA FERMENTAZIONE"
+   - Legge il file JSON del profilo selezionato da /config/profili_fermentazione/
+   - Converte duration_days → duration_hours, ramp_days → ramp_hours
+   - Aggiunge timestamp di avvio (as_timestamp(now()))
+   - Pubblica il JSON su fermentazione/f1/cmd/avvia via mqtt.publish
+   - Attende l'ACK (massimo 30s) e notifica l'esito
+
+3. SCRIPT "STOP FERMENTAZIONE"
+   - Pubblica su fermentazione/f1/cmd/stop
+   - Aggiorna input_text.f1_profilo_attivo a "Nessuno"
+
+4. SENSORI MQTT (da topic fermentazione/f1/stato)
+   - sensor.f1_temperatura_reale       → value_json.temp_reale
+   - sensor.f1_setpoint_corrente       → value_json.setpoint
+   - sensor.f1_step_corrente           → value_json.step_nome
+   - sensor.f1_ore_step               → value_json.ore_step
+   - binary_sensor.f1_riscaldatore    → value_json.riscaldatore
+   - binary_sensor.f1_refrigeratore   → value_json.refrigeratore
+   - binary_sensor.f1_allarme_sensore → value_json.allarme
+
+5. AUTOMAZIONE ALLARME EMAIL
+   - Trigger: topic fermentazione/f1/allarme riceve messaggio con tipo=sensore_offline
+   - Azione: notify.fermentazione_email con dettagli dell'errore
+   - Trigger ripristino: tipo=sensore_ripristinato → email di risoluzione
+
+6. AUTOMAZIONE WATCHDOG CONNESSIONE ESP32
+   - Se sensor.f1_temperatura_reale diventa "unavailable" (expire_after scattato)
+     mentre il profilo è attivo → email di allarme "ESP32 non raggiungibile"
+
+
+================================================================================
+DIPENDENZE / LIBRERIE
+================================================================================
+
+ESP32 Firmware (Arduino):
+  - PubSubClient (MQTT)              → https://github.com/knolleary/pubsubclient
+  - ArduinoJson                      → https://arduinojson.org/
+  - OneWire + DallasTemperature      → per DS18B20
+  - Preferences (NVS)               → inclusa nell'ESP32 Arduino core
+  - WiFiUDP + NTPClient              → per sincronizzazione orario
+
+Home Assistant:
+  - Mosquitto broker (addon HA)      → broker MQTT locale
+  - Integration MQTT (built-in)      → già disponibile
+  - notify SMTP (built-in)           → già configurato e funzionante (verificato)
+  - NON serve più: dual_smart_thermostat, Node-RED
+
+
+================================================================================
+ORDINE DI SVILUPPO CONSIGLIATO
+================================================================================
+
+Fase 1 — Infrastruttura HA
+  [ ] Creare nuova configurazione HA con topic MQTT V2
+  [ ] Creare script "avvia_fermentazione" con lettura JSON e pubblicazione MQTT
+  [ ] Creare script "stop_fermentazione"
+  [ ] Creare sensori MQTT (topic fermentazione/f1/stato)
+  [ ] Creare automazione allarme email
+  [ ] Testare con payload MQTT manuali (MQTT Explorer o Developer Tools HA)
+
+Fase 2 — Firmware ESP32 base
+  [ ] Connessione WiFi + MQTT
+  [ ] Ricezione profilo e parsing JSON
+  [ ] Salvataggio NVS
+  [ ] Pubblicazione stato periodico (dati fissi di test)
+  [ ] Test publish/subscribe con HA
+
+Fase 3 — Logica termostato ESP32
+  [ ] Calcolo setpoint da profilo + tempo trascorso
+  [ ] Gestione rampe (interpolazione)
+  [ ] Controllo relè con isteresi e protezione compressore
+  [ ] Watchdog sensore DS18B20
+
+Fase 4 — Integrazione e test
+  [ ] Test end-to-end con profilo reale
+  [ ] Simulare perdita sensore → verifica email allarme
+  [ ] Simulare reset ESP32 → verifica ripresa automatica
+  [ ] Simulare perdita WiFi → verifica autonomia locale ESP32
+
+================================================================================

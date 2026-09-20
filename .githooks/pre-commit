@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -e
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "firmware/fermentatore_v6/tools/v6/verify_build_info.ps1"

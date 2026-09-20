@@ -1,0 +1,10 @@
+# Configurazione per l'integrazione InfluxDB (legacy V3)
+# I valori reali stanno in secrets.yaml (non versionato): vedi secrets.yaml.template
+
+host: !secret influxdb_host
+port: 8086
+database: homeassistant
+username: !secret influxdb_username
+password: !secret influxdb_password
+max_retries: 3
+default_measurement: state

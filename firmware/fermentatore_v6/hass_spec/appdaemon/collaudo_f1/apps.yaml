@@ -1,0 +1,3 @@
+collaudo_f1:
+  module: collaudo_app
+  class: CollaudoF1

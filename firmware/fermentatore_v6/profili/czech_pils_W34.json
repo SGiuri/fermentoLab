@@ -1,0 +1,34 @@
+{
+  "profilo": [
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 10,
+      "duration_days": 7
+    },
+    {
+      "step": "Rampa Diacetile",
+      "temp": 16,
+      "ramp_days": 2
+    },
+    {
+      "step": "Diacetyl Rest",
+      "temp": 16,
+      "duration_days": 3
+    },
+    {
+      "step": "Discesa Lagerizzazione",
+      "temp": 1,
+      "ramp_days": 5
+    },
+    {
+      "step": "Lagerizzazione",
+      "temp": 1,
+      "duration_days": 30
+    },
+    {
+      "step": "Attesa Imbottigliamento",
+      "temp": 1,
+      "duration_days": 30
+    }
+  ]
+}

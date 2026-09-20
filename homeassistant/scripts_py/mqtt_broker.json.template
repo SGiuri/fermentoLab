@@ -1,0 +1,4 @@
+{
+  "ha_url": "http://localhost:8123",
+  "ha_token": "<long-lived access token di Home Assistant>"
+}

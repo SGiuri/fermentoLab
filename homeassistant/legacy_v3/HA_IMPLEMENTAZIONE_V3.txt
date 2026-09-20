@@ -1,0 +1,564 @@
+================================================================================
+FERMENTATORE V3 — SPECIFICHE COMPLETE PER L'IMPLEMENTAZIONE HOME ASSISTANT
+================================================================================
+Documento destinato all'AI che deve implementare la configurazione HA.
+Contiene tutto il contesto necessario: architettura, file esistenti, file da
+creare, protocollo MQTT, logica di business e casi limite.
+
+Data redazione: 27 aprile 2026
+================================================================================
+
+
+================================================================================
+SEZIONE 1 — CONTESTO ARCHITETTURALE
+================================================================================
+
+Il sistema è composto da:
+  • ESP32 ("fermentatore F1") — termostato hardware autonomo con firmware custom V3
+  • Home Assistant — pannello di monitoraggio, avvio fermentazioni e notifiche email
+  • Mosquitto — broker MQTT locale (addon HA, localhost:1883)
+  • InfluxDB + Grafana — storicizzazione opzionale
+
+L'ESP32 è AUTONOMO: riceve il profilo una volta, poi gestisce tutto localmente.
+HA non manda comandi periodici. Si limita a:
+  1. Rispondere alla richiesta di profilo all'accensione dell'ESP32
+  2. Inviare comandi manuali (avvia, stop)
+  3. Monitorare lo stato via MQTT
+  4. Inviare email di allarme
+
+ATTENZIONE: questo documento descrive la versione V3 del firmware.
+Esiste una versione V2 parzialmente implementata nei file esistenti — quella
+logica è OBSOLETA. I file V2 vanno aggiornati o sostituiti come indicato.
+
+
+================================================================================
+SEZIONE 2 — DIFFERENZE CRITICHE V2 → V3
+================================================================================
+
+La differenza più importante riguarda il flusso di avvio:
+
+V2 (vecchio, obsoleto):
+  HA invia il profilo via MQTT push quando l'operatore preme "Avvia".
+  L'ESP32 aspetta passivamente il comando su fermentazione/f1/cmd/avvia.
+
+V3 (nuovo, da implementare):
+  L'ESP32 all'avvio CHIEDE il profilo a HA pubblicando su:
+    fermentazione/f1/richiedi_profilo
+  HA deve ascoltare questo topic e rispondere su:
+    fermentazione/f1/cmd/profilo
+
+  Questa inversione è fondamentale: permette all'ESP32 di riprendere
+  automaticamente dopo un riavvio hardware senza intervento umano.
+
+Topic cambiati:
+  V2: fermentazione/f1/cmd/avvia   → V3: fermentazione/f1/cmd/profilo
+  V2: (nessun pull)                → V3: fermentazione/f1/richiedi_profilo (nuovo)
+
+Il topic fermentazione/f1/cmd/stop è invariato.
+Il topic fermentazione/f1/stato è invariato nel nome ma aggiunge il campo
+"stato_fsm" (stringa: RUNNING / STANDBY / HOLDING / ALLARME / WIFI / MQTT / ecc.)
+
+
+================================================================================
+SEZIONE 3 — STRUTTURA FILE HA (stato attuale e cosa fare)
+================================================================================
+
+Percorso base: /config/   (sulla macchina Home Assistant)
+
+FILE ESISTENTI DA AGGIORNARE:
+-------------------------------
+
+/config/configuration.yaml
+  Stato: esiste, fa riferimento al vecchio script di avvio (V2)
+  Cosa fare:
+    - Aggiornare shell_command.avvia_fermentazione → topic V3
+    - Aggiornare input_select con lista profili corretta
+    - Aggiungere input_number.f1_avvio_epoch (serve per rispondere alla richiesta)
+    - Il resto (notify, influxdb, frontend) rimane invariato
+
+/config/mqtt.yaml
+  Stato: esiste, sensori V2 funzionanti
+  Cosa fare:
+    - Aggiornare unique_id di tutti i sensori da f1_v2_* a f1_v3_*
+    - Aggiungere sensore sensor.f1_stato_fsm (nuovo campo dal firmware V3)
+    - Il resto dei sensori è compatibile (stessi topic, stessa struttura JSON)
+
+/config/automations.yaml
+  Stato: esiste, contiene automazioni V2
+  Cosa fare:
+    - AGGIUNGERE automazione che risponde a fermentazione/f1/richiedi_profilo
+      (questa è la più critica e nuova in V3)
+    - Aggiornare riferimenti al vecchio topic cmd/avvia → cmd/profilo
+    - Le automazioni di allarme email possono rimanere quasi invariate
+    - Aggiungere automazione per tipo "riavvio_in_corso" (nuovo in V3)
+
+/config/scripts.yaml
+  Stato: esiste
+  Cosa fare:
+    - Aggiornare script f1_avvia_fermentazione per salvare avvio_epoch in
+      input_number.f1_avvio_epoch (serve alla risposta automatica al boot ESP32)
+    - Il resto degli script (stop, ping, test_email) rimane compatibile
+
+/config/scripts_py/avvia_fermentazione.py
+  Stato: esiste, funzionante
+  Cosa fare:
+    - Aggiornare MQTT_TOPIC da "fermentazione/f1/cmd/avvia"
+                              a "fermentazione/f1/cmd/profilo"
+    - Il resto della logica (conversione days→hours, struttura JSON) è
+      identica e corretta
+
+FILE DA NON MODIFICARE:
+-----------------------
+/config/secrets.yaml        — credenziali SMTP e MQTT, invariato
+/config/influxdb.yaml       — storicizzazione, invariato
+/config/templates.yaml      — sensori derivati delta/giorni, invariato
+/config/profili_fermentazione/*.json — profili, invariati
+
+
+================================================================================
+SEZIONE 4 — PROTOCOLLO MQTT COMPLETO
+================================================================================
+
+Broker: Mosquitto addon HA, localhost:1883, senza autenticazione.
+Client ID ESP32: "esp32_f1_v3"
+Buffer massimo payload accettato dall'ESP32: 4096 byte
+
+────────────────────────────────────────────────────────────────────────────────
+4.1  ESP32 → HA  (topic in ascolto su HA)
+────────────────────────────────────────────────────────────────────────────────
+
+fermentazione/f1/richiedi_profilo
+  Pubblicato dall'ESP32 subito dopo aver sincronizzato NTP.
+  HA ha 15 secondi per rispondere su fermentazione/f1/cmd/profilo.
+  QoS: 1  |  retain: false
+  Payload: { "ts": <unix_epoch_uint32>, "client": "esp32_f1_v3" }
+
+fermentazione/f1/stato
+  Heartbeat periodico ogni 60s. retain=true.
+  QoS: 0  |  retain: TRUE
+  Payload:
+  {
+    "temp_reale":    <float>     temperatura DS18B20 in °C
+    "setpoint":      <float>     temperatura target corrente in °C
+    "step_nome":     <string>    nome step corrente (o nome stato FSM)
+    "step_index":    <int>       indice 0-based step (-1 se non RUNNING)
+    "ore_step":      <float>     ore trascorse nello step corrente
+    "ore_totali":    <float>     ore totali dall'avvio profilo
+    "riscaldatore":  <bool>      true se relè riscaldatore ON
+    "refrigeratore": <bool>      true se relè refrigeratore ON
+    "allarme":       <bool>      true se stato = ALLARME_SENSORE
+    "profilo":       <string>    nome profilo attivo ("nessuno" se STANDBY)
+    "stato_fsm":     <string>    RUNNING / STANDBY / HOLDING / ALLARME /
+                                 WIFI / MQTT / RICHIESTA_PROFILO
+  }
+
+fermentazione/f1/ack
+  Conferma eventi ciclo vita.
+  QoS: 0  |  retain: false
+  Payload: { "stato": <string>, "profilo": <string>, "uptime_s": <uint> }
+  Valori "stato":
+    "avviato"            → profilo accettato e fermentazione avviata
+    "fermato"            → CMD stop eseguito
+    "profilo_completato" → tutti gli step terminati, ESP32 passa in HOLDING
+    "errore_parsing"     → payload profilo non valido (JSON malformato o
+                           campo "steps" assente/vuoto)
+
+fermentazione/f1/allarme
+  Evento di errore o notifica sistema.
+  QoS: 1  |  retain: false
+  Payload: { "tipo": <string>, "durata_minuti": <int>, "uptime_s": <uint> }
+  Valori "tipo":
+    "sensore_offline"    → DS18B20 non valido da N minuti. Relè spenti.
+                           ESP32 attende 30s poi si riavvia (ESP.restart()).
+    "riavvio_in_corso"   → pubblicato 500ms prima del riavvio hardware.
+                           Usare per notifica email o log.
+    "esp32_offline"      → Last Will Testament: il broker lo pubblica
+                           automaticamente se l'ESP32 si disconnette senza
+                           avvisare (crash, perdita alimentazione).
+
+fermentazione/f1/pong
+  Risposta al CMD ping.
+  QoS: 0  |  retain: false
+  Payload: { "free_heap": <uint>, "uptime_s": <uint>, "wifi_rssi": <int> }
+
+────────────────────────────────────────────────────────────────────────────────
+4.2  HA → ESP32  (topic pubblicati da HA)
+────────────────────────────────────────────────────────────────────────────────
+
+fermentazione/f1/cmd/profilo
+  Risposta alla richiesta dell'ESP32. Pubblicare entro 15s da richiedi_profilo.
+  QoS: 1  |  retain: false
+
+  CASO A — Fermentazione attiva: invia profilo completo.
+  {
+    "profilo":                <string>    nome profilo (max 31 caratteri)
+    "avvio_epoch":            <uint32>    Unix timestamp avvio fermentazione
+    "isteresi":               <float>     banda morta relè in °C  (default 0.3)
+    "min_cycle_minutes":      <uint>      protezione compressore   (default 5)
+    "allarme_timeout_minuti": <uint>      watchdog sensore in min  (default 5)
+    "steps": [
+      { "step": <string>, "temp": <float>, "duration_hours": <float> },
+      { "step": <string>, "temp": <float>, "ramp_hours":     <float> },
+      ...
+    ]
+  }
+
+  REGOLE sui steps:
+    - duration_hours: step a temperatura COSTANTE per quella durata
+    - ramp_hours: interpolazione LINEARE dalla temp dello step precedente
+      alla "temp" di questo step, nell'arco di ramp_hours ore
+    - Ogni step deve avere SOLO UNO dei due campi (mai entrambi)
+    - Max 20 step, campo "steps" non può essere vuoto
+    - Durate in ORE (float). I file JSON dei profili usano days →
+      la conversione è responsabilità di HA via script Python
+
+  CASO B — Nessuna fermentazione attiva.
+  { "stato": "nessun_profilo", "temp_standby": <float> }
+  (temp_standby opzionale, default 18.0°C sull'ESP32)
+
+fermentazione/f1/cmd/stop
+  Ferma il processo. ESP32 spegne relè, cancella profilo da NVS, va in STANDBY.
+  QoS: 1  |  retain: false
+  Payload: { "motivo": "operatore" }  (il contenuto è ignorato dall'ESP32)
+
+fermentazione/f1/cmd/temp_standby
+  Aggiorna temperatura di standby al volo (ha effetto immediato).
+  QoS: 0  |  retain: false
+  Payload: { "temp": <float> }
+
+fermentazione/f1/cmd/ping
+  Richiesta diagnostica. L'ESP32 risponde su fermentazione/f1/pong.
+  QoS: 0  |  retain: false
+  Payload: {}
+
+
+================================================================================
+SEZIONE 5 — AUTOMAZIONI DA IMPLEMENTARE
+================================================================================
+
+--- [CRITICA - NUOVA] Risposta alla richiesta profilo ---
+
+id: v3_f1_rispondi_richiesta_profilo
+Trigger: MQTT topic fermentazione/f1/richiedi_profilo
+Descrizione:
+  Quando l'ESP32 si avvia e chiede il profilo, HA deve rispondere con:
+  - Il profilo completo (se input_text.f1_profilo_attivo != "Nessuno")
+  - Il messaggio "nessun_profilo" (altrimenti)
+
+Logica:
+  Condizione A: states('input_text.f1_profilo_attivo') not in
+                ['Nessuno','','unknown','unavailable']
+
+  Action A (profilo attivo):
+    → Eseguire shell_command che chiama avvia_fermentazione.py con:
+      - profilo  = states('input_text.f1_profilo_attivo')
+      - avvio_epoch = states('input_number.f1_avvio_epoch') | int
+      - isteresi = 0.3
+      - allarme_timeout = 5
+    → Il payload viene pubblicato su fermentazione/f1/cmd/profilo
+
+  Action B (nessun profilo):
+    → mqtt.publish
+      topic: fermentazione/f1/cmd/profilo
+      payload: '{"stato":"nessun_profilo","temp_standby":18.0}'
+      qos: 1
+
+  NOTA IMPORTANTE: avvio_epoch deve essere il timestamp ORIGINALE di avvio
+  della fermentazione, NON now(). Deve essere salvato in input_number.f1_avvio_epoch
+  quando l'operatore avvia la fermentazione (vedi script f1_avvia_fermentazione).
+  Se fosse now() ogni riavvio ESP32 ricomincerebbe il profilo da capo.
+
+--- [NUOVA] Notifica email riavvio in corso ---
+
+id: v3_f1_riavvio_in_corso
+Trigger: MQTT topic fermentazione/f1/allarme + tipo == "riavvio_in_corso"
+Action: Email notify.fermentazione_email con titolo "[INFO] F1 - Riavvio ESP32"
+  Testo: ESP32 si sta riavviando a causa di un allarme sensore.
+  La fermentazione riprenderà automaticamente al riavvio.
+  Profilo attivo: {{ states('input_text.f1_profilo_attivo') }}
+  Ore totali trascorse: {{ states('sensor.f1_ore_totali') }}h
+
+--- [ESISTENTE DA AGGIORNARE] ACK avvio profilo ---
+
+id: v3_f1_ack_avvio_ricevuto  (era v2_f1_ack_avvio_ricevuto)
+Trigger: MQTT fermentazione/f1/ack + stato == "avviato"
+Action:
+  - input_text.f1_profilo_attivo = trigger.payload_json.profilo
+  - persistent_notification: "Fermentazione avviata: <profilo>"
+  (invariato rispetto V2, solo aggiornare l'id)
+
+--- [ESISTENTE, INVARIATO] ACK stop ---
+
+id: v3_f1_ack_stop_ricevuto
+Trigger: MQTT fermentazione/f1/ack + stato == "fermato"
+Action:
+  - input_text.f1_profilo_attivo = "Nessuno"
+  - input_number.f1_avvio_epoch = 0
+  - persistent_notification stop
+
+--- [ESISTENTE, INVARIATO] Allarme sensore DS18B20 offline ---
+
+id: v3_f1_allarme_sensore
+Trigger: MQTT fermentazione/f1/allarme + tipo == "sensore_offline"
+Action: Email allarme con durata_minuti dal payload
+
+--- [ELIMINARE in V3] Sensore ripristinato ---
+
+id: v2_f1_sensore_ripristinato_email
+ELIMINARE: in V3 l'ESP32 si riavvia invece di auto-ripristinarsi.
+Non esiste più il messaggio tipo=="sensore_ripristinato".
+L'email di "sistema tornato ok" va sostituita con la notifica di
+avvenuto riavvio (tipo=="riavvio_in_corso" + ACK avviato successivo).
+
+--- [ESISTENTE, INVARIATO] LWT ESP32 offline ---
+
+id: v3_f1_esp32_offline_lwt
+Trigger: MQTT fermentazione/f1/allarme + tipo == "esp32_offline"
+Action: Email allarme disconnessione imprevista
+
+--- [ESISTENTE, INVARIATO] Watchdog ESP32 non pubblica ---
+
+id: v3_f1_esp32_disconnesso
+Trigger: sensor.f1_temperatura_reale → unavailable per 5 min
+Condition: input_text.f1_profilo_attivo non in ['Nessuno','','unknown','unavailable']
+Action: Email allarme ESP32 irraggiungibile
+
+--- [ESISTENTE, INVARIATO] Profilo completato ---
+
+id: v3_f1_profilo_completato
+Trigger: MQTT fermentazione/f1/ack + stato == "profilo_completato"
+Action: Email "[OK] Fermentazione Completata" + persistent_notification
+
+
+================================================================================
+SEZIONE 6 — SCRIPT DA IMPLEMENTARE
+================================================================================
+
+--- f1_avvia_fermentazione ---
+Quando l'operatore vuole avviare manualmente una nuova fermentazione.
+
+sequence:
+  1. variables:
+       profilo_nome:  states('input_select.f1_profilo_scelto')
+       avvio_epoch:   as_timestamp(now()) | int
+
+  2. Salva avvio_epoch in input_number.f1_avvio_epoch
+     → input_number.set_value: entity=input_number.f1_avvio_epoch, value=avvio_epoch
+     CRITICO: questo valore verrà usato nelle risposte future alle richieste
+     di profilo dell'ESP32 (anche dopo eventuali riavvii).
+
+  3. Esegue shell_command.avvia_fermentazione con parametri:
+     profilo=profilo_nome, avvio_epoch=avvio_epoch, isteresi=0.3, allarme_timeout=5
+     → questo chiama avvia_fermentazione.py che pubblica su cmd/profilo
+
+  4. persistent_notification: "Profilo inviato, attesa ACK..."
+
+--- f1_stop_fermentazione ---
+  1. mqtt.publish fermentazione/f1/cmd/stop QoS:1
+  2. input_text.f1_profilo_attivo = "Nessuno"
+  3. input_number.f1_avvio_epoch = 0
+  4. persistent_notification stop
+
+--- f1_ping_esp32 ---
+  mqtt.publish fermentazione/f1/cmd/ping payload:{}
+
+--- f1_test_email ---
+  Invia email di test con stato attuale sensori (invariato da V2)
+
+
+================================================================================
+SEZIONE 7 — ENTITÀ HA DA CREARE/AGGIORNARE
+================================================================================
+
+--- input_select.f1_profilo_scelto ---
+  name: F1 Profilo da Avviare
+  options:
+    - ale_generica
+    - czech_pils_W34
+    - ipa_dryhop
+    - lager_generica
+    - stout_US04
+    - test_costante
+    - test_rampa_v
+    - test_wave_10_20m
+  icon: mdi:flask
+
+--- input_text.f1_profilo_attivo ---
+  name: F1 Profilo Attivo
+  initial: "Nessuno"
+  max: 64
+  icon: mdi:information-outline
+
+--- input_number.f1_avvio_epoch  [NUOVA] ---
+  name: F1 Epoch Avvio Fermentazione
+  min: 0
+  max: 2147483647
+  step: 1
+  initial: 0
+  mode: box
+  icon: mdi:clock-start
+  Descrizione: Memorizza il Unix timestamp originale di avvio.
+               Viene passato all'ESP32 nelle risposte a richiedi_profilo
+               in modo che, dopo un riavvio, il calcolo del setpoint
+               riprenda dal punto corretto e non da zero.
+
+--- Sensori MQTT (mqtt.yaml) ---
+  Tutti sui topic fermentazione/f1/stato (expire_after: 180s):
+
+  sensor.f1_temperatura_reale    ← value_json.temp_reale         [°C]
+  sensor.f1_setpoint_corrente    ← value_json.setpoint           [°C]
+  sensor.f1_step_corrente        ← value_json.step_nome
+  sensor.f1_step_index           ← value_json.step_index
+  sensor.f1_ore_step             ← value_json.ore_step           [h]
+  sensor.f1_ore_totali           ← value_json.ore_totali         [h]
+  sensor.f1_profilo_esp32        ← value_json.profilo
+  sensor.f1_stato_fsm            ← value_json.stato_fsm          [NUOVA]
+
+  binary_sensor.f1_riscaldatore  ← value_json.riscaldatore  (payload_on: "true")
+  binary_sensor.f1_refrigeratore ← value_json.refrigeratore (payload_on: "true")
+  binary_sensor.f1_allarme       ← value_json.allarme       (payload_on: "true")
+
+--- Sensori template (templates.yaml, invariati) ---
+  sensor.f1_delta_temperatura    = temp_reale - setpoint_corrente
+  sensor.f1_giorni_step          = ore_step / 24
+  sensor.f1_giorni_totali        = ore_totali / 24
+
+
+================================================================================
+SEZIONE 8 — SCRIPT PYTHON (scripts_py/avvia_fermentazione.py)
+================================================================================
+
+Il file esiste. Unica modifica necessaria:
+
+RIGA DA CAMBIARE:
+  MQTT_TOPIC = "fermentazione/f1/cmd/avvia"   ← V2, OBSOLETO
+
+CAMBIARE IN:
+  MQTT_TOPIC = "fermentazione/f1/cmd/profilo"  ← V3 corretto
+
+Tutto il resto del file è corretto:
+  - Legge il JSON da /config/profili_fermentazione/<nome>.json
+  - Converte duration_days → duration_hours  (*24)
+  - Converte ramp_days → ramp_hours  (*24)
+  - Aggiunge avvio_epoch, isteresi, min_cycle_minutes, allarme_timeout_minuti
+  - Pubblica il payload JSON su MQTT con QoS=1
+
+Percorsi fissi nel file (non modificare):
+  PROFILI_DIR = "/config/profili_fermentazione"
+  MQTT_HOST   = "127.0.0.1"
+  MQTT_PORT   = 1883
+
+
+================================================================================
+SEZIONE 9 — SHELL COMMAND (configuration.yaml)
+================================================================================
+
+Il shell_command.avvia_fermentazione chiama avvia_fermentazione.py passando:
+  arg1: nome profilo        (stringa)
+  arg2: avvio_epoch         (intero Unix timestamp)
+  arg3: isteresi            (float, default 0.3)
+  arg4: allarme_timeout     (intero minuti, default 5)
+
+Esempio configurazione in configuration.yaml:
+  shell_command:
+    avvia_fermentazione: >
+      python3 /config/scripts_py/avvia_fermentazione.py
+      "{{ profilo }}"
+      {{ avvio_epoch }}
+      {{ isteresi | default(0.3) }}
+      {{ allarme_timeout | default(5) }}
+
+Questa definizione è già corretta nel file esistente.
+
+
+================================================================================
+SEZIONE 10 — FORMATO PROFILI JSON (riferimento)
+================================================================================
+
+I file in /config/profili_fermentazione/*.json usano questo formato:
+{
+  "profilo": [
+    { "step": "Nome Step",  "temp": 11, "duration_days": 10 },
+    { "step": "Nome Rampa", "temp": 16, "ramp_days": 2      },
+    ...
+  ]
+}
+
+La conversione days→hours avviene in avvia_fermentazione.py PRIMA di inviare
+all'ESP32. Il firmware V3 accetta SOLO ore, mai giorni.
+
+Profili disponibili (non modificare):
+  ale_generica.json
+  czech_pils_W34.json
+  ipa_dryhop.json
+  lager_generica.json
+  stout_US04.json
+  test_costante.json
+  test_rampa_v.json
+  test_wave_10_20m.json
+
+
+================================================================================
+SEZIONE 11 — NOTIFY E SMTP
+================================================================================
+
+Il servizio notify.fermentazione_email è già configurato in configuration.yaml:
+  server:   secrets.yaml → smtp_server  = <smtp-server-ip>
+  port:     secrets.yaml → smtp_port    = 25
+  sender:   secrets.yaml → smtp_sender  = <sender@example.com>
+  recipient: secrets.yaml → smtp_recipient = <recipient@example.com>
+  encryption: none  (server SMTP locale senza TLS)
+
+Non serve modificare nulla. Usare sempre action: notify.fermentazione_email
+
+
+================================================================================
+SEZIONE 12 — INFLUXDB
+================================================================================
+
+influxdb.yaml è invariato e corretto:
+  host: <influxdb-host>
+  port: 8086
+  database: homeassistant
+  username: grafana / password: <influxdb-password>
+
+I sensori HA vengono storicizzati automaticamente da InfluxDB.
+Nessuna modifica necessaria.
+
+
+================================================================================
+SEZIONE 13 — CHECKLIST IMPLEMENTAZIONE
+================================================================================
+
+[ ] 1. scripts_py/avvia_fermentazione.py
+        → Cambiare MQTT_TOPIC in "fermentazione/f1/cmd/profilo"
+
+[ ] 2. configuration.yaml
+        → Aggiungere input_number.f1_avvio_epoch
+        → Verificare shell_command.avvia_fermentazione (probabilmente ok)
+
+[ ] 3. mqtt.yaml
+        → Aggiornare unique_id da f1_v2_* a f1_v3_*
+        → Aggiungere sensor.f1_stato_fsm
+
+[ ] 4. scripts.yaml
+        → Aggiornare f1_avvia_fermentazione: salvare avvio_epoch in
+          input_number.f1_avvio_epoch PRIMA di chiamare shell_command
+        → Aggiornare f1_stop_fermentazione: azzerare anche
+          input_number.f1_avvio_epoch
+
+[ ] 5. automations.yaml
+        [ ] 5a. AGGIUNGERE v3_f1_rispondi_richiesta_profilo  ← CRITICA
+        [ ] 5b. AGGIUNGERE v3_f1_riavvio_in_corso (email per tipo=riavvio_in_corso)
+        [ ] 5c. ELIMINARE  v2_f1_sensore_ripristinato_email (non esiste più in V3)
+        [ ] 5d. Aggiornare tutti gli id da v2_* a v3_*
+        [ ] 5e. Verificare che le automazioni esistenti continuino a funzionare
+                (i topic di allarme/ack/stato sono invariati)
+
+[ ] 6. Riavviare HA e verificare con MQTT Explorer:
+        → Simulare avvio ESP32: pubblicare su fermentazione/f1/richiedi_profilo
+          con payload {"ts":1745000000,"client":"esp32_f1_v3"}
+        → Verificare che HA risponda su fermentazione/f1/cmd/profilo
+          entro 15 secondi con il profilo corretto (o nessun_profilo)
+
+================================================================================

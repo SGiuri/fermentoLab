@@ -1,0 +1,49 @@
+# ============================================================
+# .gitignore — FermentaLab (ESP32 fermentation controller + Home Assistant)
+# ============================================================
+
+# Windows / macOS / Google Drive metadata
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# ------------------------------------------------------------
+# Secrets — NEVER commit credentials, tokens or private addresses
+# ------------------------------------------------------------
+# Firmware: one secrets.h per sketch folder. Start from secrets.h.template.
+**/secrets.h
+# Home Assistant: real secrets.yaml files. Start from secrets.yaml.template.
+**/secrets.yaml
+# Files that hold real hostnames / IPs / keys / tokens for the local setup
+*.local.md
+*.local.json
+*.local.env
+.env
+.env.*
+!.env.example
+mqtt_broker.json
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+# Claude Code per-machine settings
+.claude/settings.local.json
+
+# ------------------------------------------------------------
+# Build artifacts
+# ------------------------------------------------------------
+build/
+*.bin
+*.elf
+*.map
+*.hex
+*.bundle
+
+# Python bytecode cache (created when scripts under hass_spec/ import collaudo_motore.py directly)
+__pycache__/
+
+# VS Code
+.vscode/
+
+# Host firmware tests (build output)
+**/tests/host/build/

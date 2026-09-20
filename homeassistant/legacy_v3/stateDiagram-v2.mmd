@@ -1,0 +1,55 @@
+stateDiagram-v2
+    [*] --> WIFI_CONNESSIONE
+
+    state "WiFi Connessione" as WIFI_CONNESSIONE
+    state "MQTT Connessione" as MQTT_CONNESSIONE
+    state "Richiesta Profilo\npubblica su richiedi_profilo\nattende risposta HA" as RICHIESTA_PROFILO
+    state "RUNNING\nCalcola setpoint dal profilo\nControlla relè con isteresi" as RUNNING
+    state "STANDBY\nNessun profilo attivo\nMantieni temperatura standard" as STANDBY
+    state "HOLDING\nProfilo completato\nMantieni ultima temperatura" as HOLDING
+    state "ALLARME SENSORE\nDS18B20 guasto — relè OFF" as ALLARME_SENSORE
+
+    WIFI_CONNESSIONE --> MQTT_CONNESSIONE    : WiFi OK
+    WIFI_CONNESSIONE --> RUNNING             : timeout + NVS ok
+    WIFI_CONNESSIONE --> STANDBY             : timeout + NVS vuoto
+
+    MQTT_CONNESSIONE --> RICHIESTA_PROFILO   : MQTT OK
+    MQTT_CONNESSIONE --> RUNNING             : timeout + NVS ok
+    MQTT_CONNESSIONE --> STANDBY             : timeout + NVS vuoto
+
+    RICHIESTA_PROFILO --> RUNNING            : profilo ricevuto da HA
+    RICHIESTA_PROFILO --> RUNNING            : nessun_profilo + NVS ok
+    RICHIESTA_PROFILO --> STANDBY            : nessun_profilo + NVS vuoto
+    RICHIESTA_PROFILO --> RUNNING            : timeout + NVS ok
+    RICHIESTA_PROFILO --> STANDBY            : timeout + NVS vuoto
+
+    RUNNING --> HOLDING                      : profilo completato
+    RUNNING --> STANDBY                      : CMD stop
+    RUNNING --> ALLARME_SENSORE              : sensore guasto
+
+    STANDBY --> RUNNING                      : CMD profilo
+    STANDBY --> ALLARME_SENSORE              : sensore guasto
+
+    HOLDING --> STANDBY                      : CMD stop
+    HOLDING --> RUNNING                      : CMD profilo
+    HOLDING --> ALLARME_SENSORE              : sensore guasto
+
+    ALLARME_SENSORE --> RUNNING              : ripristino (era RUNNING)
+    ALLARME_SENSORE --> STANDBY             : ripristino (era STANDBY)
+    ALLARME_SENSORE --> HOLDING              : ripristino (era HOLDING)
+
+    note right of RUNNING
+        Ogni 5s: leggi DS18B20
+        Ogni 60s: pubblica stato MQTT
+        setpoint = f(tempo, steps, rampe)
+    end note
+
+    note right of STANDBY
+        temp_standby aggiornabile
+        via CMD temp_standby MQTT
+    end note
+
+    note right of HOLDING
+        setpoint fisso = ultimo step
+        attende CMD stop o nuovo profilo
+    end note

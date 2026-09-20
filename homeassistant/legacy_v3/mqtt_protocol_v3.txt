@@ -1,0 +1,257 @@
+================================================================================
+FERMENTATORE V3 — PROTOCOLLO MQTT
+Riferimento completo dei messaggi scambiati tra Home Assistant e ESP32
+================================================================================
+
+CONVENZIONI
+-----------
+  • Tutti i payload sono JSON UTF-8, senza BOM
+  • Tutti i valori float usano il punto come separatore decimale (es. 18.5)
+  • I timestamp sono Unix epoch (secondi interi, uint32)
+  • Le durate sono sempre in ORE (float) — HA converte days→hours prima dell'invio
+  • QoS 1 per tutti i comandi critici (profilo, stop); QoS 0 per ping/pong
+
+
+================================================================================
+SEZIONE 1 — HA → ESP32  (comandi)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+1.1  fermentazione/f1/cmd/profilo
+     Risposta alla richiesta di profilo dell'ESP32.
+     HA pubblica su questo topic in due casi:
+       A) Fermentazione attiva  → invia il profilo completo
+       B) Nessuna fermentazione → invia il messaggio "nessun_profilo"
+────────────────────────────────────────────────────────────────────────────────
+
+CASO A — Profilo attivo
+Trigger: ESP32 pubblica su fermentazione/f1/richiedi_profilo
+
+Payload obbligatorio:
+{
+  "profilo":                <string>    nome del profilo (max 31 char)
+  "avvio_epoch":            <uint32>    timestamp Unix dell'avvio fermentazione
+  "isteresi":               <float>     banda morta relè in °C        (default: 0.3)
+  "min_cycle_minutes":      <uint>      protezione compressore in min  (default: 5)
+  "allarme_timeout_minuti": <uint>      timeout watchdog sensore in min (default: 5)
+  "steps":                  <array>     lista degli step (vedi sotto)
+}
+
+Struttura di ogni step:
+  Step a temperatura COSTANTE:
+  {
+    "step": <string>,         nome dello step (max 47 char)
+    "temp": <float>,          temperatura target in °C
+    "duration_hours": <float> durata in ore
+  }
+
+  Step con RAMPA lineare:
+  {
+    "step": <string>,         nome dello step (max 47 char)
+    "temp": <float>,          temperatura FINALE della rampa in °C
+    "ramp_hours": <float>     durata della rampa in ore
+  }
+
+  NOTA: ogni step deve avere SOLO uno dei due campi (duration_hours OPPURE
+  ramp_hours). La temperatura iniziale di una rampa è la temp finale dello
+  step precedente (o la temp del primo step se è la prima rampa).
+
+Esempio completo — Lager Generica:
+{
+  "profilo": "lager_generica",
+  "avvio_epoch": 1745000000,
+  "isteresi": 0.3,
+  "min_cycle_minutes": 5,
+  "allarme_timeout_minuti": 5,
+  "steps": [
+    { "step": "Fermentazione Primaria",   "temp": 11, "duration_hours": 240  },
+    { "step": "Rampa Diacetile",          "temp": 16, "ramp_hours": 48       },
+    { "step": "Diacetyl Rest",            "temp": 16, "duration_hours": 72   },
+    { "step": "Discesa Lagerizzazione",   "temp": 2,  "ramp_hours": 120      },
+    { "step": "Lagerizzazione",           "temp": 2,  "duration_hours": 672  }
+  ]
+}
+
+LIMITI:
+  • Max 20 step per profilo
+  • Payload massimo accettato: 4096 byte
+  • Il campo "steps" deve essere presente e non vuoto, altrimenti il profilo
+    viene scartato e l'ESP32 resta in attesa
+
+────────────────────────────────────────────────────────────────────────────────
+CASO B — Nessun profilo attivo
+
+{
+  "stato": "nessun_profilo",
+  "temp_standby": <float>     (opzionale, default 18.0°C)
+}
+
+Esempio:
+{ "stato": "nessun_profilo", "temp_standby": 18.0 }
+
+────────────────────────────────────────────────────────────────────────────────
+1.2  fermentazione/f1/cmd/stop
+     Ferma il processo e porta l'ESP32 in STANDBY.
+     I relè vengono spenti, il profilo in NVS viene cancellato.
+     QoS: 1  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+Payload (qualsiasi, ignorato):
+{ "motivo": "operatore" }
+
+────────────────────────────────────────────────────────────────────────────────
+1.3  fermentazione/f1/cmd/temp_standby
+     Aggiorna la temperatura di standby mentre l'ESP32 è in STANDBY o RUNNING.
+     Ha effetto immediato.
+     QoS: 0  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+{ "temp": <float> }
+
+Esempio:
+{ "temp": 20.0 }
+
+────────────────────────────────────────────────────────────────────────────────
+1.4  fermentazione/f1/cmd/ping
+     Richiesta di diagnostica. L'ESP32 risponde su fermentazione/f1/pong.
+     QoS: 0  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+Payload: {} (vuoto)
+
+
+================================================================================
+SEZIONE 2 — ESP32 → HA  (telemetria e notifiche)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+2.1  fermentazione/f1/richiedi_profilo
+     Pubblicato dall'ESP32 all'avvio, dopo aver ottenuto NTP.
+     HA deve rispondere su fermentazione/f1/cmd/profilo entro 15 secondi.
+     QoS: 1  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+{ "ts": <uint32>, "client": "esp32_f1_v3" }
+
+────────────────────────────────────────────────────────────────────────────────
+2.2  fermentazione/f1/stato
+     Heartbeat periodico ogni 60 secondi. retain=true.
+     Se HA non riceve questo topic per >180s → sensore diventa "unavailable".
+     QoS: 0  |  retain: TRUE
+────────────────────────────────────────────────────────────────────────────────
+
+{
+  "temp_reale":    <float>    temperatura misurata da DS18B20 in °C
+  "setpoint":      <float>    temperatura target corrente in °C
+  "step_nome":     <string>   nome dello step corrente (o stato FSM se non RUNNING)
+  "step_index":    <int>      indice 0-based dello step (-1 se non in RUNNING)
+  "ore_step":      <float>    ore trascorse nello step corrente
+  "ore_totali":    <float>    ore totali dall'avvio del profilo
+  "riscaldatore":  <bool>     true se relè riscaldatore attivo
+  "refrigeratore": <bool>     true se relè refrigeratore attivo
+  "allarme":       <bool>     true se ESP32 è in stato ALLARME_SENSORE
+  "profilo":       <string>   nome profilo attivo ("nessuno" se STANDBY)
+  "stato_fsm":     <string>   stato interno FSM (RUNNING/STANDBY/HOLDING/ALLARME)
+}
+
+────────────────────────────────────────────────────────────────────────────────
+2.3  fermentazione/f1/ack
+     Conferma di ricezione comandi o notifica eventi di ciclo vita.
+     QoS: 0  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+{ "stato": <string>, "profilo": <string>, "uptime_s": <uint> }
+
+Valori di "stato":
+  "avviato"            → profilo ricevuto e avviato
+  "fermato"            → CMD stop eseguito
+  "profilo_completato" → tutti gli step del profilo sono terminati
+                         (ESP32 passa in HOLDING, mantiene ultima temp)
+  "errore_parsing"     → payload profilo non valido
+
+────────────────────────────────────────────────────────────────────────────────
+2.4  fermentazione/f1/allarme
+     Evento di errore o ripristino. Triggera le automazioni email in HA.
+     QoS: 1  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+{ "tipo": <string>, "durata_minuti": <int>, "uptime_s": <uint> }
+
+Valori di "tipo":
+  "sensore_offline"    → DS18B20 non risponde da allarme_timeout_minuti
+                         → relè spenti, countdown 30s, poi ESP.restart()
+  "riavvio_in_corso"   → pubblicato 500ms prima del riavvio hardware
+  "esp32_offline"      → Last Will Testament: pubblicato automaticamente
+                         dal broker se l'ESP32 si disconnette senza avvisare
+
+────────────────────────────────────────────────────────────────────────────────
+2.5  fermentazione/f1/pong
+     Risposta al ping di diagnostica.
+     QoS: 0  |  retain: false
+────────────────────────────────────────────────────────────────────────────────
+
+{ "free_heap": <uint>, "uptime_s": <uint>, "wifi_rssi": <int> }
+
+
+================================================================================
+SEZIONE 3 — FLUSSO DI HANDSHAKE ALL'AVVIO (sequenza temporale)
+================================================================================
+
+  t=0     ESP32 si avvia, si connette a WiFi e MQTT
+  t+Xs    ESP32 sincronizza NTP
+  t+Xs    ESP32 pubblica su  fermentazione/f1/richiedi_profilo
+  t+Xs    HA riceve il messaggio (trigger automazione)
+  t+Xs+Δ  HA pubblica su     fermentazione/f1/cmd/profilo
+            → Profilo completo  (se fermentazione attiva)
+            → {"stato":"nessun_profilo",...}  (altrimenti)
+  t+Xs+Δ  ESP32 riceve e cambia stato (RUNNING / STANDBY)
+
+  Timeout: se HA non risponde entro 15 secondi, l'ESP32 verifica il profilo
+  salvato in NVS e procede autonomamente.
+
+
+================================================================================
+SEZIONE 4 — COME CONFIGURARE HOME ASSISTANT
+================================================================================
+
+AUTOMAZIONE — risposta alla richiesta profilo
+---------------------------------------------
+Trigger:
+  platform: mqtt
+  topic: fermentazione/f1/richiedi_profilo
+
+Action (se fermentazione attiva):
+  service: mqtt.publish
+  data:
+    topic: fermentazione/f1/cmd/profilo
+    payload: >
+      {
+        "profilo": "{{ states('input_text.f1_profilo_attivo') }}",
+        "avvio_epoch": {{ states('input_number.f1_avvio_epoch') | int }},
+        "isteresi": 0.3,
+        "min_cycle_minutes": 5,
+        "allarme_timeout_minuti": 5,
+        "steps": [ ... ]    ← generato dallo script Python avvia_fermentazione.py
+      }
+    qos: 1
+
+Action (se non attiva):
+  service: mqtt.publish
+  data:
+    topic: fermentazione/f1/cmd/profilo
+    payload: '{"stato":"nessun_profilo","temp_standby":18.0}'
+    qos: 1
+
+SENSORI MQTT HA (da fermentazione/f1/stato, expire_after: 180)
+--------------------------------------------------------------
+  sensor.f1_temperatura_reale    ← value_json.temp_reale
+  sensor.f1_setpoint_corrente    ← value_json.setpoint
+  sensor.f1_step_corrente        ← value_json.step_nome
+  sensor.f1_ore_step             ← value_json.ore_step
+  sensor.f1_ore_totali           ← value_json.ore_totali
+  sensor.f1_stato_fsm            ← value_json.stato_fsm
+  binary_sensor.f1_riscaldatore  ← value_json.riscaldatore  (payload_on: "true")
+  binary_sensor.f1_refrigeratore ← value_json.refrigeratore (payload_on: "true")
+  binary_sensor.f1_allarme       ← value_json.allarme       (payload_on: "true")
+
+================================================================================

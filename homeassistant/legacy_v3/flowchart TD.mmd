@@ -1,0 +1,44 @@
+flowchart TD
+    ENTRY([Tick ogni 5s\nstato = RUNNING])
+
+    ENTRY --> READ[Leggi DS18B20\ntemp_corrente]
+    READ --> ELAPSED[Calcola secondi_trascorsi\n= now_epoch - avvio_epoch]
+
+    ELAPSED --> CALC_SP[Calcola setpoint corrente\ncalcolaSetpoint profilo secondi]
+
+    CALC_SP --> STEP_TYPE{Tipo step\ncorrente?}
+
+    STEP_TYPE -->|duration_hours| CONST[Setpoint = temp step\ncostante]
+    STEP_TYPE -->|ramp_hours| RAMP[Interpolazione lineare\nSP = T_prev + frac × T_step - T_prev\nfrac = ore_within_step / ramp_hours]
+
+    CONST --> THERMO
+    RAMP --> THERMO
+
+    THERMO{temp_corrente vs setpoint}
+
+    THERMO -->|temp < SP - isteresi\ntroppo freddo| HEAT[RISCALDATORE ON\nREFRIGERATORE OFF]
+    THERMO -->|temp > SP + isteresi\ntroppo caldo| COOL_CHK{Compressore:\ntempo_off >= min_cycle?}
+    THERMO -->|SP - isteresi ≤ temp ≤ SP + isteresi\nzona neutra| HOLD[Nessun cambio\nrelè invariati]
+
+    COOL_CHK -->|sì — ok accendere| COOL[RISCALDATORE OFF\nREFRIGERATORE ON]
+    COOL_CHK -->|no — troppo presto| WAIT[RISCALDATORE OFF\nREFRIGERATORE fermo OFF\nattendi prossimo tick]
+
+    HEAT --> DONE_RELAY
+    COOL --> DONE_RELAY
+    HOLD --> DONE_RELAY
+    WAIT --> DONE_RELAY
+
+    DONE_RELAY[Applica uscite\ndigitalWrite relay]
+
+    DONE_RELAY --> PROF_END{ore_totali\n>= durata_profilo?}
+
+    PROF_END -->|sì| NOTIF[Pubblica ACK\nprofilo_completato\nSP = ultima temp]
+    PROF_END -->|no| MQTT_CHK
+
+    NOTIF --> HOLDING([Transizione\nstato = HOLDING])
+
+    MQTT_CHK{60s trascorsi\nda ultimo stato?}
+    MQTT_CHK -->|sì| PUB[Pubblica fermentazione-f1-stato\ntemp setpoint step ore relè stato_fsm]
+    MQTT_CHK -->|no| END_TICK
+
+    PUB --> END_TICK([Fine tick\nattendi prossimo])

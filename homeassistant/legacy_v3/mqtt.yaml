@@ -1,0 +1,99 @@
+# ============================================================
+# MQTT V3 — Sensori dal topic fermentazione/f1/stato
+# L'ESP32 pubblica JSON ogni 60s su questo topic (retain=true).
+# expire_after: 180 → se mancano 3 poll, il sensore diventa unavailable
+# ============================================================
+
+sensor:
+  - name: "F1 Temperatura Reale"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_temp_reale
+    device_class: temperature
+    unit_of_measurement: "°C"
+    value_template: "{{ value_json.temp_reale }}"
+    expire_after: 180
+    icon: mdi:thermometer
+
+  - name: "F1 Setpoint Corrente"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_setpoint
+    device_class: temperature
+    unit_of_measurement: "°C"
+    value_template: "{{ value_json.setpoint }}"
+    expire_after: 180
+    icon: mdi:thermometer-check
+
+  - name: "F1 Step Corrente"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_step_nome
+    value_template: "{{ value_json.step_nome }}"
+    expire_after: 180
+    icon: mdi:stairs
+
+  - name: "F1 Step Index"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_step_index
+    value_template: "{{ value_json.step_index }}"
+    expire_after: 180
+    icon: mdi:counter
+
+  - name: "F1 Ore Step"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_ore_step
+    unit_of_measurement: "h"
+    value_template: "{{ value_json.ore_step | round(1) }}"
+    expire_after: 180
+    icon: mdi:clock-time-four
+
+  - name: "F1 Ore Totali"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_ore_totali
+    unit_of_measurement: "h"
+    value_template: "{{ value_json.ore_totali | round(1) }}"
+    expire_after: 180
+    icon: mdi:clock-outline
+
+  - name: "F1 Profilo ESP32"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_profilo_esp32
+    value_template: "{{ value_json.profilo }}"
+    expire_after: 180
+    icon: mdi:flask
+
+  - name: "F1 Stato FSM"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_stato_fsm
+    value_template: "{{ value_json.stato_fsm }}"
+    expire_after: 180
+    icon: mdi:state-machine
+
+binary_sensor:
+  - name: "F1 Riscaldatore"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_riscaldatore
+    value_template: "{{ value_json.riscaldatore | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: running
+    icon: mdi:fire
+
+  - name: "F1 Refrigeratore"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_refrigeratore
+    value_template: "{{ value_json.refrigeratore | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: running
+    icon: mdi:snowflake
+
+  - name: "F1 Allarme Sensore"
+    state_topic: "fermentazione/f1/stato"
+    unique_id: f1_v3_allarme_sensore
+    value_template: "{{ value_json.allarme | string | lower }}"
+    payload_on: "true"
+    payload_off: "false"
+    expire_after: 180
+    device_class: problem
+    icon: mdi:thermometer-alert

@@ -1,0 +1,505 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F2 — LABORATORIO (didattica)
+# Richiede firmware >= 6.3.0 e i pacchetti fermentatore_v6_f2_allarmi / _entita.
+#
+# - Modalità Produzione / Didattica / Collaudo: gli script che modificano il controllo o avviano
+#   esperimenti partono solo in Didattica (blocco lato Home Assistant). Collaudo: pacchetto _collaudo.
+# - Preset di controllo tarati con le simulazioni di 48 h su 20 L d'acqua (tests/host).
+# - "Applica al fermentatore": stesso modo = parametri aggiornati al volo; modo diverso con
+#   controllo in marcia = stop -> control_set -> start.
+# - Esperimento a gradino di setpoint con metriche: sovraelongazione, tempo di assestamento
+#   (entro ±0,2 °C per 30 min), errore medio assoluto, commutazioni dei relè.
+# - I limiti di sicurezza del firmware restano sempre attivi, in entrambe le modalità.
+#
+# FILE GENERATO da genera_f2.py a partire da fermentatore_v6_f2_laboratorio.yaml: non modificare a mano.
+# =============================================================================
+
+input_select:
+  f2_v6_modalita:
+    name: "F2 V6 Modalità"
+    options:
+      - Produzione
+      - Didattica
+      - Collaudo
+    icon: mdi:shield-account
+  f2_v6_preset:
+    name: "F2 V6 Preset Controllo"
+    options:
+      - "On/Off, isteresi 0,5 °C (produzione)"
+      - "On/Off puro, senza isteresi"
+      - "On/Off, isteresi 1,0 °C"
+      - "P, Kp 30"
+      - "PI consigliato, Kp 30 Ki 0,002"
+      - "PID, Kp 30 Ki 0,002 Kd 5000"
+      - "PI mal tarato, Kp 1 Ki 0,001"
+    icon: mdi:playlist-star
+
+input_number:
+  f2_v6_lab_gradino:
+    name: "F2 V6 Ampiezza Gradino"
+    min: -5
+    max: 5
+    step: 0.5
+    initial: 2
+    unit_of_measurement: "°C"
+    icon: mdi:stairs-up
+
+template:
+  # Soglie di accensione dell'on/off con isteresi (per i grafici): il freddo si accende a SP+h,
+  # il caldo a SP−h, entrambi si spengono al setpoint. Negli altri modi l'isteresi non interviene.
+  - sensor:
+      - name: "F2 V6 Soglia Freddo"
+        unique_id: f2_v6_lab_soglia_freddo
+        unit_of_measurement: "°C"
+        state_class: measurement
+        availability: >-
+          {{ is_state('sensor.f2_v6_modo_controllo_attivo', 'on_off_hyst_sym')
+             and has_value('sensor.f2_v6_setpoint') and has_value('sensor.f2_v6_isteresi_attiva') }}
+        state: "{{ ((states('sensor.f2_v6_setpoint') | float) + (states('sensor.f2_v6_isteresi_attiva') | float)) | round(2) }}"
+      - name: "F2 V6 Soglia Caldo"
+        unique_id: f2_v6_lab_soglia_caldo
+        unit_of_measurement: "°C"
+        state_class: measurement
+        availability: >-
+          {{ is_state('sensor.f2_v6_modo_controllo_attivo', 'on_off_hyst_sym')
+             and has_value('sensor.f2_v6_setpoint') and has_value('sensor.f2_v6_isteresi_attiva') }}
+        state: "{{ ((states('sensor.f2_v6_setpoint') | float) - (states('sensor.f2_v6_isteresi_attiva') | float)) | round(2) }}"
+
+  # Parametri impostati in HA ma non ancora applicati al fermentatore
+  - binary_sensor:
+      - name: "F2 V6 Modifiche Da Applicare"
+        unique_id: f2_v6_lab_modifiche_da_applicare
+        icon: mdi:upload-lock
+        availability: "{{ has_value('sensor.f2_v6_modo_controllo_attivo') and has_value('sensor.f2_v6_kp_caldo_attivo') }}"
+        state: >-
+          {% set ns = namespace(d=[]) %}
+          {% set mh = states('input_select.f2_v6_modo_controllo') %}
+          {% set mh = 'on_off_hyst_sym' if mh == 'on_off_isteresi' else mh %}
+          {% if mh != states('sensor.f2_v6_modo_controllo_attivo') %}{% set ns.d = ns.d + ['modo'] %}{% endif %}
+          {% for h, a in [('kp_risc', 'kp_caldo_attivo'), ('ki_risc', 'ki_caldo_attivo'), ('kd_risc', 'kd_caldo_attivo'),
+                          ('kp_frigo', 'kp_freddo_attivo'), ('ki_frigo', 'ki_freddo_attivo'), ('kd_frigo', 'kd_freddo_attivo')] %}
+            {% set x = states('input_number.f2_v6_' ~ h) | float(0) %}
+            {% if (x - states('sensor.f2_v6_' ~ a) | float(0)) | abs > 0.00001 + 0.0005 * x | abs %}{% set ns.d = ns.d + [h] %}{% endif %}
+          {% endfor %}
+          {% if (states('input_number.f2_v6_isteresi') | float(0) - states('sensor.f2_v6_isteresi_attiva') | float(0)) | abs > 0.005 %}
+            {% set ns.d = ns.d + ['isteresi'] %}
+          {% endif %}
+          {{ ns.d | count > 0 }}
+        attributes:
+          differenze: >-
+            {% set ns = namespace(d=[]) %}
+            {% set mh = states('input_select.f2_v6_modo_controllo') %}
+            {% set mh = 'on_off_hyst_sym' if mh == 'on_off_isteresi' else mh %}
+            {% if mh != states('sensor.f2_v6_modo_controllo_attivo') %}{% set ns.d = ns.d + ['modo'] %}{% endif %}
+            {% for h, a, n in [('kp_risc', 'kp_caldo_attivo', 'Kp caldo'), ('ki_risc', 'ki_caldo_attivo', 'Ki caldo'),
+                               ('kd_risc', 'kd_caldo_attivo', 'Kd caldo'), ('kp_frigo', 'kp_freddo_attivo', 'Kp freddo'),
+                               ('ki_frigo', 'ki_freddo_attivo', 'Ki freddo'), ('kd_frigo', 'kd_freddo_attivo', 'Kd freddo')] %}
+              {% set x = states('input_number.f2_v6_' ~ h) | float(0) %}
+              {% if (x - states('sensor.f2_v6_' ~ a) | float(0)) | abs > 0.00001 + 0.0005 * x | abs %}{% set ns.d = ns.d + [n] %}{% endif %}
+            {% endfor %}
+            {% if (states('input_number.f2_v6_isteresi') | float(0) - states('sensor.f2_v6_isteresi_attiva') | float(0)) | abs > 0.005 %}
+              {% set ns.d = ns.d + ['isteresi'] %}
+            {% endif %}
+            {{ ns.d | join(', ') }}
+
+  # Metriche dell'esperimento in corso. Tutti i valori stanno nell'attributo "dati"
+  # (calcolati insieme, dallo stesso stato precedente). Si aggiorna a ogni misura e ogni minuto.
+  - triggers:
+      - trigger: event
+        event_type: f2_v6_esperimento
+        id: evento
+      - trigger: state
+        entity_id: sensor.f2_v6_temperatura
+        id: misura
+      - trigger: time_pattern
+        minutes: "/1"
+        id: tempo
+    sensor:
+      - name: "F2 V6 Esperimento"
+        unique_id: f2_v6_lab_esperimento
+        icon: mdi:flask-outline
+        state: >-
+          {% set a = this.attributes.get('dati') if this is defined and this.attributes is defined else none %}
+          {% set a = a if a is mapping else {} %}
+          {% if trigger.id == 'evento' and trigger.event.data.get('azione') == 'avvio' %}in corso
+          {%- elif trigger.id == 'evento' and trigger.event.data.get('azione') == 'fine' %}concluso
+          {%- elif a.get('attivo') %}in corso
+          {%- elif a.get('inizio_ts') is number %}concluso
+          {%- else %}nessuno{% endif %}
+        attributes:
+          dati: >-
+            {% set a = this.attributes.get('dati') if this is defined and this.attributes is defined else none %}
+            {% set a = a if a is mapping else {} %}
+            {% set ev = trigger.id == 'evento' %}
+            {% set avvio = ev and trigger.event.data.get('azione') == 'avvio' %}
+            {% set fine = ev and trigger.event.data.get('azione') == 'fine' %}
+            {% set T = states('sensor.f2_v6_temperatura') | float(none) %}
+            {% set ts = now().timestamp() | round(0) %}
+            {% set comm_ora = states('sensor.f2_v6_commutazioni_rele') | int(0) %}
+            {% if avvio %}
+            {% set lato = 'caldo' if (trigger.event.data.get('sp_finale') | float(0)) >= (trigger.event.data.get('sp_iniziale') | float(0)) else 'freddo' %}
+            {{ {'attivo': true,
+                'descrizione': trigger.event.data.get('descrizione', 'Esperimento'),
+                'inizio_ts': ts, 'fine_ts': none,
+                'sp_iniziale': trigger.event.data.get('sp_iniziale') | float(0),
+                'sp_finale': trigger.event.data.get('sp_finale') | float(0),
+                't_iniziale': T, 't_max': T, 't_min': T,
+                'ultimo_ts': ts, 'somma_errore': 0, 'minuti': 0, 'errore_medio': none,
+                'in_banda_da': none, 'assestamento_min': none, 'sovraelongazione': 0,
+                'comm_inizio': comm_ora, 'commutazioni': 0,
+                'modo': states('sensor.f2_v6_modo_controllo_attivo'),
+                'lato': lato,
+                'kp': states('sensor.f2_v6_kp_' ~ lato ~ '_attivo') | float(none),
+                'ki': states('sensor.f2_v6_ki_' ~ lato ~ '_attivo') | float(none),
+                'kd': states('sensor.f2_v6_kd_' ~ lato ~ '_attivo') | float(none),
+                'isteresi': states('sensor.f2_v6_isteresi_attiva') | float(none)} }}
+            {% elif a.get('attivo') and not fine and T is not none and a.get('inizio_ts') is number %}
+            {% set dt_min = ((ts - a.ultimo_ts) / 60) if a.get('ultimo_ts') is number else 0 %}
+            {% set e = (T - a.sp_finale) | abs %}
+            {% set somma = (a.somma_errore | float(0)) + e * dt_min %}
+            {% set minuti = (ts - a.inizio_ts) / 60 %}
+            {% set tmax = ([a.t_max, T] | max) if a.get('t_max') is number else T %}
+            {% set tmin = ([a.t_min, T] | min) if a.get('t_min') is number else T %}
+            {% set banda_da = ((a.in_banda_da if a.get('in_banda_da') is number else ts) if e <= 0.2 else none) %}
+            {% set assest = ((banda_da - a.inizio_ts) / 60) if (banda_da is number and ts - banda_da >= 1800) else none %}
+            {% set salita = a.sp_finale >= a.sp_iniziale %}
+            {% set sovra = ([0, tmax - a.sp_finale] | max) if salita else ([0, a.sp_finale - tmin] | max) %}
+            {{ dict(a, t_max=tmax, t_min=tmin, ultimo_ts=ts,
+                    somma_errore=somma | round(3), minuti=minuti | round(1),
+                    errore_medio=((somma / minuti) | round(3)) if minuti > 0 else none,
+                    in_banda_da=banda_da,
+                    assestamento_min=(assest | round(0)) if assest is number else none,
+                    sovraelongazione=sovra | round(2),
+                    commutazioni=[0, comm_ora - (a.comm_inizio | int(0))] | max) }}
+            {% elif fine and a.get('attivo') %}
+            {{ dict(a, attivo=false, fine_ts=ts) }}
+            {% else %}
+            {{ a }}
+            {% endif %}
+
+script:
+  f2_v6_lab_carica_preset:
+    alias: "F2 V6 Lab - Carica preset nei parametri"
+    description: "Copia il preset scelto nei parametri di controllo di HA (non invia nulla al fermentatore)."
+    icon: mdi:playlist-check
+    mode: single
+    sequence:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: input_select.f2_v6_modalita
+                state: Didattica
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: f2_v6_lab_bloccato
+              title: "F2 V6: parametri bloccati"
+              message: "Il fermentatore è in modalità Produzione: i preset si caricano solo in Didattica."
+          - stop: "Modalità Produzione"
+      - variables:
+          tabella:
+            "On/Off, isteresi 0,5 °C (produzione)": {modo: on_off_isteresi, kp: 25, ki: 0.03, kd: 0, h: 0.5}
+            "On/Off puro, senza isteresi": {modo: on_off, kp: 25, ki: 0.03, kd: 0, h: 0.5}
+            "On/Off, isteresi 1,0 °C": {modo: on_off_isteresi, kp: 25, ki: 0.03, kd: 0, h: 1.0}
+            "P, Kp 30": {modo: P, kp: 30, ki: 0, kd: 0, h: 0.5}
+            "PI consigliato, Kp 30 Ki 0,002": {modo: PI, kp: 30, ki: 0.002, kd: 0, h: 0.5}
+            "PID, Kp 30 Ki 0,002 Kd 5000": {modo: PID, kp: 30, ki: 0.002, kd: 5000, h: 0.5}
+            "PI mal tarato, Kp 1 Ki 0,001": {modo: PI, kp: 1, ki: 0.001, kd: 0, h: 0.5}
+          p: "{{ tabella[states('input_select.f2_v6_preset')] }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_modo_controllo
+        data:
+          option: "{{ p.modo }}"
+      - action: input_number.set_value
+        target:
+          entity_id: [input_number.f2_v6_kp_risc, input_number.f2_v6_kp_frigo]
+        data:
+          value: "{{ p.kp }}"
+      - action: input_number.set_value
+        target:
+          entity_id: [input_number.f2_v6_ki_risc, input_number.f2_v6_ki_frigo]
+        data:
+          value: "{{ p.ki }}"
+      - action: input_number.set_value
+        target:
+          entity_id: [input_number.f2_v6_kd_risc, input_number.f2_v6_kd_frigo]
+        data:
+          value: "{{ p.kd }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.f2_v6_isteresi
+        data:
+          value: "{{ p.h }}"
+
+  f2_v6_lab_applica:
+    alias: "F2 V6 Lab - Applica al fermentatore"
+    description: >-
+      Invia modo e parametri di HA al fermentatore. Stesso modo: aggiornamento al volo.
+      Modo diverso con controllo in marcia: stop, control_set, start. Solo in Didattica.
+    icon: mdi:upload
+    mode: single
+    sequence:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: input_select.f2_v6_modalita
+                state: Didattica
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: f2_v6_lab_bloccato
+              title: "F2 V6: parametri bloccati"
+              message: "Il fermentatore è in modalità Produzione: il controllo si modifica solo in Didattica."
+          - stop: "Modalità Produzione"
+      - variables:
+          modo: >-
+            {{ 'on_off_hyst_sym' if states('input_select.f2_v6_modo_controllo') == 'on_off_isteresi'
+               else states('input_select.f2_v6_modo_controllo') }}
+          params:
+            kp_heat: "{{ states('input_number.f2_v6_kp_risc') | float(25) }}"
+            ki_heat: "{{ states('input_number.f2_v6_ki_risc') | float(0.03) }}"
+            kd_heat: "{{ states('input_number.f2_v6_kd_risc') | float(0) }}"
+            kp_cool: "{{ states('input_number.f2_v6_kp_frigo') | float(25) }}"
+            ki_cool: "{{ states('input_number.f2_v6_ki_frigo') | float(0.03) }}"
+            kd_cool: "{{ states('input_number.f2_v6_kd_frigo') | float(0) }}"
+            isteresi: "{{ states('input_number.f2_v6_isteresi') | float(0.5) }}"
+          cambio_in_marcia: >-
+            {{ states('sensor.f2_v6_fsm') in ['RUNNING', 'HOLDING']
+               and states('sensor.f2_v6_modo_controllo_attivo') != modo }}
+      - if:
+          - condition: template
+            value_template: "{{ cambio_in_marcia }}"
+        then:
+          - action: mqtt.publish
+            data:
+              topic: fermentazione/v6/f2/ha/cmd/stop
+              payload: >-
+                {"schema_version":"1.0","request_id":"f2-lab-stop-{{ now().strftime('%H%M%S') }}",
+                 "ts":{{ now() | as_timestamp | int }},"reason":"cambio_modo_didattica"}
+              qos: 1
+              retain: false
+          - wait_for_trigger:
+              - trigger: mqtt
+                topic: fermentazione/v6/f2/esp/ack
+                value_template: "{{ value_json.get('cmd') }}"
+                payload: stop
+            timeout: "00:00:20"
+          - if:
+              - condition: template
+                value_template: "{{ wait.trigger is none }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: f2_v6_lab_applica
+                  title: "F2 V6: cambio di modo non eseguito"
+                  message: "Il fermentatore non ha confermato lo stop entro 20 s: modo e parametri non inviati."
+              - stop: "Nessun ack allo stop"
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/cmd/control_set
+          payload: >-
+            {"schema_version":"1.0","request_id":"f2-lab-ctrl-{{ now().strftime('%H%M%S') }}",
+             "ts":{{ now() | as_timestamp | int }},"control_mode":"{{ modo }}","params":{{ params | to_json }}}
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - trigger: mqtt
+            topic: fermentazione/v6/f2/esp/ack
+            value_template: "{{ value_json.get('cmd') }}"
+            payload: control_set
+        timeout: "00:00:20"
+      - variables:
+          esito: >-
+            {% if wait.trigger is none %}nessuna risposta dal fermentatore
+            {%- else %}{{ wait.trigger.payload_json.status }}{{ (' (' ~ wait.trigger.payload_json.reason_code ~ ')')
+                if wait.trigger.payload_json.reason_code else '' }}{% endif %}
+      # Dopo uno stop si riparte sempre, anche se il control_set è stato rifiutato:
+      # il fermentatore torna in marcia con il modo che aveva.
+      - if:
+          - condition: template
+            value_template: "{{ cambio_in_marcia }}"
+        then:
+          - action: mqtt.publish
+            data:
+              topic: fermentazione/v6/f2/ha/cmd/start
+              payload: >-
+                {"schema_version":"1.0","request_id":"f2-lab-start-{{ now().strftime('%H%M%S') }}",
+                 "ts":{{ now() | as_timestamp | int }}}
+              qos: 1
+              retain: false
+      - action: logbook.log
+        data:
+          name: "F2 Laboratorio"
+          message: >-
+            Controllo inviato: {{ modo }}, Kp {{ states('input_number.f2_v6_kp_risc') }},
+            Ki {{ states('input_number.f2_v6_ki_risc') }}, Kd {{ states('input_number.f2_v6_kd_risc') }},
+            isteresi {{ states('input_number.f2_v6_isteresi') }} °C. Esito: {{ esito }}.
+          entity_id: sensor.f2_v6_modo_controllo_attivo
+      - action: persistent_notification.create
+        data:
+          notification_id: f2_v6_lab_applica
+          title: "F2 V6: controllo inviato"
+          message: "{{ modo }}: {{ esito }}"
+
+  f2_v6_lab_gradino:
+    alias: "F2 V6 Lab - Esperimento a gradino"
+    description: >-
+      Porta il setpoint al valore attuale più l'ampiezza scelta, con un profilo a temperatura
+      costante, e avvia la raccolta delle metriche. Solo in Didattica.
+    icon: mdi:stairs
+    mode: single
+    sequence:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: input_select.f2_v6_modalita
+                state: Didattica
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: f2_v6_lab_bloccato
+              title: "F2 V6: esperimenti bloccati"
+              message: "Il fermentatore è in modalità Produzione: gli esperimenti si avviano solo in Didattica."
+          - stop: "Modalità Produzione"
+      - variables:
+          sp_ora: "{{ states('sensor.f2_v6_setpoint') | float(20) }}"
+          sp_nuovo: >-
+            {{ [[sp_ora + (states('input_number.f2_v6_lab_gradino') | float(0)), 2.0] | max, 30.0] | min }}
+          descrizione: "Gradino da {{ sp_ora | round(1) }} a {{ sp_nuovo | round(1) }} °C ({{ states('sensor.f2_v6_modo_controllo_attivo') }})"
+      - event: f2_v6_esperimento
+        event_data:
+          azione: avvio
+          descrizione: "{{ descrizione }}"
+          sp_iniziale: "{{ sp_ora }}"
+          sp_finale: "{{ sp_nuovo }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.f2_v6_temp_costante
+        data:
+          value: "{{ sp_nuovo }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.f2_v6_avvio_epoch
+        data:
+          value: "{{ now() | as_timestamp | int }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.f2_v6_profilo_attivo
+        data:
+          value: "Esperimento {{ sp_nuovo | round(1) }} °C"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_stato_controllo
+        data:
+          option: in_corso
+      - action: mqtt.publish
+        data:
+          topic: fermentazione/v6/f2/ha/cmd/profile_set
+          payload: >-
+            {"schema_version":"1.0","request_id":"f2-lab-gradino-{{ now().strftime('%H%M%S') }}",
+             "ts":{{ now() | as_timestamp | int }},"profilo":"Esperimento {{ sp_nuovo | round(1) }} C",
+             "avvio_epoch":0,"steps":[{"step":"Gradino","temp":{{ sp_nuovo | round(2) }},"duration_hours":2160}]}
+          qos: 1
+          retain: false
+      - action: logbook.log
+        data:
+          name: "F2 Laboratorio"
+          message: "Esperimento avviato: {{ descrizione }}"
+          entity_id: sensor.f2_v6_esperimento
+
+  f2_v6_lab_termina_esperimento:
+    alias: "F2 V6 Lab - Termina esperimento"
+    description: "Chiude l'esperimento e registra le metriche nel registro attività. Il setpoint non cambia."
+    icon: mdi:flag-checkered
+    mode: single
+    sequence:
+      - condition: state
+        entity_id: sensor.f2_v6_esperimento
+        state: "in corso"
+      - event: f2_v6_esperimento
+        event_data:
+          azione: fine
+      - delay:
+          seconds: 2
+      - variables:
+          d: "{{ state_attr('sensor.f2_v6_esperimento', 'dati') or {} }}"
+          risultato: >-
+            {{ d.get('descrizione', 'Esperimento') }}: durata {{ ((d.get('minuti') or 0) / 60) | round(1) }} h,
+            sovraelongazione {{ d.get('sovraelongazione', 'n/d') }} °C,
+            assestamento {{ ((d.get('assestamento_min') / 60) | round(1) ~ ' h') if d.get('assestamento_min') is number else 'non raggiunto' }},
+            errore medio {{ d.get('errore_medio', 'n/d') }} °C, commutazioni {{ d.get('commutazioni', 'n/d') }},
+            modo {{ d.get('modo') }} (Kp {{ d.get('kp') }}, Ki {{ d.get('ki') }}, Kd {{ d.get('kd') }}, isteresi {{ d.get('isteresi') }} °C)
+      - action: logbook.log
+        data:
+          name: "F2 Laboratorio"
+          message: "Risultato — {{ risultato }}"
+          entity_id: sensor.f2_v6_esperimento
+      - action: persistent_notification.create
+        data:
+          notification_id: f2_v6_lab_risultato
+          title: "F2 V6: risultato esperimento"
+          message: "{{ risultato }}"
+
+  f2_v6_lab_passa_a_didattica:
+    alias: "F2 V6 Lab - Passa a Didattica"
+    description: "Da usare solo senza birra nel fermentatore: sblocca parametri ed esperimenti."
+    icon: mdi:school
+    mode: single
+    sequence:
+      - if:
+          - condition: state
+            entity_id: input_select.f2_v6_modalita
+            state: Collaudo
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: f2_v6_lab_bloccato
+              title: "F2 V6: collaudo in corso"
+              message: "F2 è in modalità Collaudo: esci dal collaudo dalla dashboard F2 Collaudo."
+          - stop: "Modalità Collaudo"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_modalita
+        data:
+          option: Didattica
+      - action: logbook.log
+        data:
+          name: "F2 Laboratorio"
+          message: "Modalità Didattica attivata: parametri ed esperimenti sbloccati."
+          entity_id: input_select.f2_v6_modalita
+
+  f2_v6_lab_passa_a_produzione:
+    alias: "F2 V6 Lab - Torna in Produzione"
+    description: >-
+      Chiude l'eventuale esperimento, applica il preset di produzione (on/off con isteresi 0,5 °C)
+      e blocca parametri ed esperimenti. Il profilo in corso non viene toccato.
+    icon: mdi:beer
+    mode: single
+    sequence:
+      - if:
+          - condition: state
+            entity_id: sensor.f2_v6_esperimento
+            state: "in corso"
+        then:
+          - action: script.f2_v6_lab_termina_esperimento
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_preset
+        data:
+          option: "On/Off, isteresi 0,5 °C (produzione)"
+      - action: script.f2_v6_lab_carica_preset
+      - action: script.f2_v6_lab_applica
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f2_v6_modalita
+        data:
+          option: Produzione
+      - action: logbook.log
+        data:
+          name: "F2 Laboratorio"
+          message: "Modalità Produzione: on/off con isteresi 0,5 °C applicato, parametri bloccati."
+          entity_id: input_select.f2_v6_modalita

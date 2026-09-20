@@ -1,0 +1,543 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F2 — ENTITÀ  (richiede firmware >= 6.2.0)
+#
+# Ridefinisce le entità MQTT con disponibilità (LWT retained su esp/availability) e scadenza
+# dei valori, aggiunge i sensori diagnostici e gli allarmi offline, sensore guasto e riavvio
+# anomalo. Da installare insieme al flash del 6.2.0: con il 6.1.x le entità risultano non
+# disponibili perché il topic esp/availability non esiste.
+# Gli allarmi di temperatura sono in fermentatore_v6_f2_allarmi.yaml (vale per entrambi).
+#
+# Installazione
+#   1. Copiare in /config/packages/ (packages abilitati come per il file allarmi).
+#   2. Rimuovere dalla configurazione esistente le entità MQTT con questi unique_id
+#      (HA rifiuta gli unique_id duplicati). Gli entity_id e lo storico restano:
+#        f2_v6_temp_reale f2_v6_setpoint f2_v6_pid_output f2_v6_duty_risc
+#        f2_v6_duty_frigo f2_v6_ore_step f2_v6_ore_totali f2_v6_step_nome
+#        f2_v6_step_index f2_v6_profilo f2_v6_stato_fsm f2_v6_modo_controllo_attivo
+#        f2_v6_firmware ferm_v6_f2_hardware_target ferm_v6_f2_allarme_tipo
+#        f2_v6_ack ferm_v6_f2_esp_log f2_v6_riscaldatore f2_v6_refrigeratore
+#        f2_v6_allarme f2_v6_online
+#   3. Rimuovere l'automazione "F2 V6 - ESP32 Offline (LWT)" (id v6_f2_esp32_offline_lwt):
+#      dal firmware 6.2.0 il LWT non è più su esp/alarm e non scatterebbe mai.
+#   4. Riavviare Home Assistant.
+#
+# FILE GENERATO da genera_f2.py a partire da fermentatore_v6_f2_entita.yaml: non modificare a mano.
+# =============================================================================
+
+mqtt:
+  sensor:
+    # --- Misure: scadono se l'ESP smette di pubblicare (heartbeat 30 s) ---
+    - name: "F2 V6 Temperatura"
+      unique_id: f2_v6_temp_reale
+      icon: mdi:thermometer
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      # Con sensore non utilizzabile il valore diventa sconosciuto invece dell'ultima lettura
+      value_template: >-
+        {{ value_json.temp_reale if value_json.get('sensore_ok', true) and value_json.temp_reale is not none else none }}
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      suggested_display_precision: 2
+
+    - name: "F2 V6 Setpoint"
+      unique_id: f2_v6_setpoint
+      icon: mdi:target
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.setpoint }}"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      suggested_display_precision: 2
+
+    - name: "F2 V6 PID Output"
+      unique_id: f2_v6_pid_output
+      icon: mdi:chart-bell-curve-cumulative
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.pid_output }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+
+    - name: "F2 V6 Duty Riscaldatore"
+      unique_id: f2_v6_duty_risc
+      icon: mdi:fire
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.duty_riscaldatore }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+
+    - name: "F2 V6 Duty Refrigeratore"
+      unique_id: f2_v6_duty_frigo
+      icon: mdi:snowflake
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.duty_refrigeratore }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+
+    - name: "F2 V6 Ore Step"
+      unique_id: f2_v6_ore_step
+      icon: mdi:clock-outline
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.ore_step }}"
+      unit_of_measurement: "h"
+
+    - name: "F2 V6 Ore Totali"
+      unique_id: f2_v6_ore_totali
+      icon: mdi:clock-check-outline
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.ore_totali }}"
+      unit_of_measurement: "h"
+
+    - name: "F2 V6 Step"
+      unique_id: f2_v6_step_nome
+      icon: mdi:stairs
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      value_template: "{{ value_json.step_nome }}"
+
+    - name: "F2 V6 Step Index"
+      unique_id: f2_v6_step_index
+      icon: mdi:counter
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      value_template: "{{ value_json.step_index }}"
+
+    - name: "F2 V6 Profilo"
+      unique_id: f2_v6_profilo
+      icon: mdi:flask
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      value_template: "{{ value_json.profilo }}"
+
+    - name: "F2 V6 FSM"
+      unique_id: f2_v6_stato_fsm
+      icon: mdi:state-machine
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.stato_fsm }}"
+
+    - name: "F2 V6 Modo Controllo Attivo"
+      unique_id: f2_v6_modo_controllo_attivo
+      icon: mdi:tune
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      value_template: "{{ value_json.control_mode }}"
+
+    - name: "F2 V6 Firmware"
+      unique_id: f2_v6_firmware
+      icon: mdi:chip
+      state_topic: "fermentazione/v6/f2/esp/state"
+      value_template: "{{ value_json.firmware }}"
+      entity_category: diagnostic
+
+    - name: "F2 V6 Hardware Target"
+      unique_id: ferm_v6_f2_hardware_target
+      icon: mdi:chip-outline
+      state_topic: "fermentazione/v6/f2/esp/state"
+      value_template: "{{ value_json.hardware_target }}"
+      entity_category: diagnostic
+
+    # --- Diagnostica (nuovi campi firmware 6.2.0) ---
+    - name: "F2 V6 Eta Lettura"
+      unique_id: f2_v6_temp_eta_s
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.temp_eta_s if value_json.get('temp_eta_s', -1) >= 0 else none }}"
+      unit_of_measurement: "s"
+      device_class: duration
+      state_class: measurement
+      entity_category: diagnostic
+
+    - name: "F2 V6 Uptime"
+      unique_id: f2_v6_uptime
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('uptime_s') }}"
+      unit_of_measurement: "s"
+      device_class: duration
+      state_class: total_increasing
+      entity_category: diagnostic
+
+    - name: "F2 V6 Causa Ultimo Reset"
+      unique_id: f2_v6_reset_reason
+      state_topic: "fermentazione/v6/f2/esp/state"
+      value_template: "{{ value_json.get('reset_reason') }}"
+      entity_category: diagnostic
+
+    - name: "F2 V6 RSSI"
+      unique_id: f2_v6_rssi
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('rssi') }}"
+      unit_of_measurement: "dBm"
+      device_class: signal_strength
+      state_class: measurement
+      entity_category: diagnostic
+
+    - name: "F2 V6 Commutazioni Rele"
+      unique_id: f2_v6_commutazioni
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      value_template: "{{ value_json.get('commutazioni') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+
+    # --- Eventi (senza scadenza: restano visibili anche con ESP offline) ---
+    - name: "F2 V6 Allarme Tipo"
+      unique_id: ferm_v6_f2_allarme_tipo
+      icon: mdi:alert-circle-outline
+      state_topic: "fermentazione/v6/f2/esp/alarm"
+      value_template: "{{ value_json.tipo }}"
+
+    - name: "F2 V6 Ack"
+      unique_id: f2_v6_ack
+      icon: mdi:check-circle-outline
+      state_topic: "fermentazione/v6/f2/esp/ack"
+      value_template: "{{ value_json.cmd }}: {{ value_json.status }}{{ ' (' ~ value_json.reason_code ~ ')' if value_json.reason_code else '' }}"
+      json_attributes_topic: "fermentazione/v6/f2/esp/ack"
+
+    - name: "F2 V6 ESP Log"
+      unique_id: ferm_v6_f2_esp_log
+      icon: mdi:console-line
+      state_topic: "fermentazione/v6/f2/esp/log"
+      value_template: "{{ value_json.liv }} {{ value_json.mod }}: {{ value_json.msg[:200] }}"
+      entity_category: diagnostic
+
+    # --- Didattica: grandezze interne del controllore (esp/controllo, firmware >= 6.3.0) ---
+    - name: "F2 V6 Errore"
+      unique_id: f2_v6_ctl_errore
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('errore') }}"
+      unit_of_measurement: "°C"
+      state_class: measurement
+      suggested_display_precision: 2
+      icon: mdi:delta
+    - name: "F2 V6 Termine P"
+      unique_id: f2_v6_ctl_p
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('p') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+      suggested_display_precision: 1
+      icon: mdi:alpha-p-box
+    - name: "F2 V6 Termine I"
+      unique_id: f2_v6_ctl_i
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('i') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+      suggested_display_precision: 1
+      icon: mdi:alpha-i-box
+    - name: "F2 V6 Termine D"
+      unique_id: f2_v6_ctl_d
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('d') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+      suggested_display_precision: 2
+      icon: mdi:alpha-d-box
+    - name: "F2 V6 Uscita Controllore"
+      unique_id: f2_v6_ctl_uscita
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('uscita') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+      suggested_display_precision: 1
+      icon: mdi:tune-vertical
+    - name: "F2 V6 Integrale"
+      unique_id: f2_v6_ctl_integrale
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('integrale') }}"
+      unit_of_measurement: "°C·s"
+      state_class: measurement
+      suggested_display_precision: 0
+      entity_category: diagnostic
+    - name: "F2 V6 Isteresi Attiva"
+      unique_id: f2_v6_ctl_isteresi
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('isteresi') }}"
+      unit_of_measurement: "°C"
+      state_class: measurement
+      suggested_display_precision: 2
+      icon: mdi:arrow-expand-vertical
+    - name: "F2 V6 KP Caldo Attivo"
+      unique_id: f2_v6_ctl_kp_caldo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('kp_caldo') }}"
+      entity_category: diagnostic
+    - name: "F2 V6 KI Caldo Attivo"
+      unique_id: f2_v6_ctl_ki_caldo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('ki_caldo') }}"
+      entity_category: diagnostic
+    - name: "F2 V6 KD Caldo Attivo"
+      unique_id: f2_v6_ctl_kd_caldo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('kd_caldo') }}"
+      entity_category: diagnostic
+    - name: "F2 V6 KP Freddo Attivo"
+      unique_id: f2_v6_ctl_kp_freddo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('kp_freddo') }}"
+      entity_category: diagnostic
+    - name: "F2 V6 KI Freddo Attivo"
+      unique_id: f2_v6_ctl_ki_freddo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('ki_freddo') }}"
+      entity_category: diagnostic
+    - name: "F2 V6 KD Freddo Attivo"
+      unique_id: f2_v6_ctl_kd_freddo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ value_json.get('kd_freddo') }}"
+      entity_category: diagnostic
+
+  binary_sensor:
+    - name: "F2 V6 Online"
+      unique_id: f2_v6_online
+      state_topic: "fermentazione/v6/f2/esp/availability"
+      payload_on: "online"
+      payload_off: "offline"
+      device_class: connectivity
+
+    - name: "F2 V6 Riscaldatore"
+      unique_id: f2_v6_riscaldatore
+      icon: mdi:radiator
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if value_json.riscaldatore else 'OFF' }}"
+      device_class: heat
+
+    - name: "F2 V6 Refrigeratore"
+      unique_id: f2_v6_refrigeratore
+      icon: mdi:snowflake-variant
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if value_json.refrigeratore else 'OFF' }}"
+      device_class: cold
+
+    - name: "F2 V6 Allarme"
+      unique_id: f2_v6_allarme
+      icon: mdi:alert-circle
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if value_json.allarme else 'OFF' }}"
+      device_class: problem
+
+    - name: "F2 V6 Controllo Attivo"
+      unique_id: f2_v6_ctl_attivo
+      state_topic: "fermentazione/v6/f2/esp/controllo"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if value_json.get('attivo') else 'OFF' }}"
+      icon: mdi:play-network
+
+    - name: "F2 V6 Sensore Guasto"
+      unique_id: f2_v6_sensore_guasto
+      state_topic: "fermentazione/v6/f2/esp/state"
+      availability_topic: "fermentazione/v6/f2/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'OFF' if value_json.get('sensore_ok', true) else 'ON' }}"
+      device_class: problem
+
+template:
+  # Riavvii non comandati: uptime che torna indietro con meno di 90 s tra l'ultimo messaggio e il boot
+  # e causa diversa da 'software' (reboot da HA, OTA, recupero del sensore). Un blackout vero dura di più.
+  - triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v6/f2/esp/state"
+    sensor:
+      - name: "F2 V6 Riavvii Spontanei"
+        unique_id: f2_v6_riavvii_spontanei
+        icon: mdi:restart-alert
+        state_class: total_increasing
+        state: >-
+          {% set n = this.state | int(0) %}
+          {% set u = trigger.payload_json.get('uptime_s', -1) | int(-1) %}
+          {% set pu = this.attributes.get('uptime_prec', -1) | int(-1) %}
+          {% set pt = this.attributes.get('msg_prec_ts', 0) | float(0) %}
+          {% set boot = now().timestamp() - u %}
+          {% set spontaneo = u >= 0 and pu >= 0 and u < pu and pt > 0 and (boot - pt) < 90
+                             and trigger.payload_json.get('reset_reason') != 'software' %}
+          {{ n + (1 if spontaneo else 0) }}
+        attributes:
+          uptime_prec: "{{ trigger.payload_json.get('uptime_s', -1) }}"
+          msg_prec_ts: "{{ now().timestamp() | round(0) }}"
+          ultimo: >-
+            {% set u = trigger.payload_json.get('uptime_s', -1) | int(-1) %}
+            {% set pu = this.attributes.get('uptime_prec', -1) | int(-1) %}
+            {% set pt = this.attributes.get('msg_prec_ts', 0) | float(0) %}
+            {% set boot = now().timestamp() - u %}
+            {% if u >= 0 and pu >= 0 and u < pu and pt > 0 and (boot - pt) < 90
+                  and trigger.payload_json.get('reset_reason') != 'software' %}
+            {{ {'quando': boot | round(0), 'causa': trigger.payload_json.get('reset_reason'),
+                'offline_s': [(boot - pt) | round(0), 0] | max} }}
+            {% else %}{{ this.attributes.get('ultimo') }}{% endif %}
+
+
+automation:
+  - id: v6_f2_pkg_offline
+    alias: "F2 V6 - ESP32 offline (availability)"
+    description: "LWT retained su esp/availability: scatta anche se HA si riavvia dopo la caduta."
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.f2_v6_online
+        to: "off"
+        for:
+          minutes: 3
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: f2_v6_pkg_offline
+          title: "F2 V6: ESP32 offline"
+          message: >-
+            Nessuna connessione MQTT da 3 minuti. Il firmware continua a regolare la temperatura
+            in autonomia, ma non è più monitorato. Ultima temperatura nota nello storico.
+      - action: notify.fermentazione_email
+        data:
+          title: "[ALLARME] F2 V6 - ESP32 offline"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — ESP32 F2 offline da 3 minuti.
+            Profilo: {{ states('sensor.f2_v6_profilo') }}. Step: {{ states('sensor.f2_v6_step') }}.
+            Verificare alimentazione e WiFi.
+
+  - id: v6_f2_pkg_online
+    alias: "F2 V6 - ESP32 di nuovo online"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.f2_v6_online
+        from: "off"
+        to: "on"
+    actions:
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: f2_v6_pkg_offline
+      - delay:
+          seconds: 45
+      - action: persistent_notification.create
+        data:
+          notification_id: f2_v6_pkg_online
+          title: "F2 V6: ESP32 di nuovo online"
+          message: >-
+            Stato {{ states('sensor.f2_v6_fsm') }}, temperatura {{ states('sensor.f2_v6_temperatura') }} °C,
+            setpoint {{ states('sensor.f2_v6_setpoint') }} °C, causa ultimo reset
+            {{ states('sensor.f2_v6_causa_ultimo_reset') }}.
+
+  - id: v6_f2_pkg_sensore_guasto
+    alias: "F2 V6 - Sensore temperatura non utilizzabile"
+    description: "Il firmware ha spento i relè per sicurezza: la temperatura non è regolata."
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.f2_v6_sensore_guasto
+        to: "on"
+        for:
+          minutes: 2
+    actions:
+      - action: notify.fermentazione_email
+        data:
+          title: "[ALLARME] F2 V6 - Sensore DS18B20 non utilizzabile"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — Nessuna lettura valida del DS18B20 da oltre 2 minuti.
+            I relè sono spenti per sicurezza: la birra NON è regolata finché il sensore non torna valido.
+            Ultima lettura valida {{ states('sensor.f2_v6_eta_lettura') }} s fa.
+
+  - id: v6_f2_pkg_riavvio_spontaneo
+    alias: "F2 V6 - Riavvio spontaneo ESP32"
+    description: >-
+      L'ESP32 è ripartito da solo (causa poweron) restando offline meno di 90 s: non è un blackout ma
+      un disturbo di alimentazione o sul pin EN, tipicamente alla commutazione della pompa.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: sensor.f2_v6_riavvii_spontanei
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.to_state is not none
+             and trigger.from_state.state not in ['unknown', 'unavailable']
+             and trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+      - condition: template
+        value_template: "{{ (state_attr('sensor.f2_v6_riavvii_spontanei', 'ultimo') or {}).get('causa') == 'poweron' }}"
+    actions:
+      - action: notify.fermentazione_email
+        data:
+          title: "[ATTENZIONE] F2 V6 - Riavvio spontaneo dell'ESP32"
+          message: >-
+            {% set u = state_attr('sensor.f2_v6_riavvii_spontanei', 'ultimo') or {} %}
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — L'ESP32 F2 si è riavviato da solo (causa {{ u.get('causa') }},
+            offline circa {{ u.get('offline_s') }} s). Riavvii spontanei registrati: {{ states('sensor.f2_v6_riavvii_spontanei') }}.
+            Ha ripreso in stato {{ states('sensor.f2_v6_fsm') }} con setpoint {{ states('sensor.f2_v6_setpoint') }} °C.
+            Probabile disturbo alla commutazione della pompa: verificare snubber sulla pompa, condensatore sul pin EN,
+            alimentazione separata di ESP32 e relè.
+
+  - id: v6_f2_pkg_riavvio_anomalo
+    alias: "F2 V6 - Riavvio anomalo ESP32"
+    description: "Watchdog, panic o brownout: il loop si è bloccato o l'alimentazione è instabile."
+    mode: single
+    triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v6/f2/esp/state"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.payload_json.get('uptime_s', 999999) < 180
+             and trigger.payload_json.get('reset_reason') in ['panic', 'task_wdt', 'int_wdt', 'wdt', 'brownout'] }}
+    actions:
+      - action: notify.fermentazione_email
+        data:
+          title: "[ATTENZIONE] F2 V6 - Riavvio anomalo ({{ trigger.payload_json.reset_reason }})"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — L'ESP32 F2 si è riavviato per {{ trigger.payload_json.reset_reason }}.
+            Ha ripreso in stato {{ trigger.payload_json.stato_fsm }} con setpoint {{ trigger.payload_json.setpoint }} °C.
+            Se si ripete, verificare alimentatore e cablaggio.
+      # Un solo avviso per avvio (lo stato arriva ogni 30 s)
+      - delay:
+          minutes: 5

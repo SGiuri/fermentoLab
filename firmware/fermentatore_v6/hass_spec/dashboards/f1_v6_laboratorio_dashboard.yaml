@@ -1,0 +1,1146 @@
+# =============================================================================
+# Dashboard "F1 Laboratorio" — Fermentatore V6 F1, firmware >= 6.3.0
+# Richiede i pacchetti fermentatore_v6_f1_entita / _allarmi / _laboratorio e le card
+# mushroom, apexcharts-card, card-mod, state-switch.
+#
+# Viste: Panoramica · Laboratorio (controllore dal vivo) · Esperimenti (gradino e metriche)
+#        · Fermentazione (avvio, pausa, stop) · Diagnostica.
+# Modalità Produzione: parametri in sola lettura, niente esperimenti.
+# Modalità Didattica: preset, parametri, gradini. I limiti di sicurezza del firmware restano attivi.
+# =============================================================================
+title: F1 Laboratorio
+views:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PANORAMICA
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Panoramica
+    path: panoramica
+    icon: mdi:view-dashboard
+    cards:
+
+      - type: custom:mushroom-chips-card
+        chips:
+          - type: template
+            icon: "{{ 'mdi:wifi' if is_state('binary_sensor.f1_v6_online', 'on') else 'mdi:wifi-off' }}"
+            icon_color: "{{ 'green' if is_state('binary_sensor.f1_v6_online', 'on') else 'red' }}"
+            content: "{{ 'Online' if is_state('binary_sensor.f1_v6_online', 'on') else 'Offline' }}"
+            tap_action:
+              action: more-info
+              entity: binary_sensor.f1_v6_online
+          - type: template
+            icon: mdi:database-clock
+            icon_color: "{{ 'green' if is_state('binary_sensor.f1_v6_dati_in_arrivo', 'on') else 'red' }}"
+            content: "{{ 'Dati freschi' if is_state('binary_sensor.f1_v6_dati_in_arrivo', 'on') else 'Dati fermi' }}"
+          - type: template
+            icon: mdi:state-machine
+            icon_color: >-
+              {% set s = states('sensor.f1_v6_fsm') %}
+              {{ 'green' if s == 'RUNNING' else ('orange' if s in ['HOLDING', 'PAUSED'] else ('red' if s == 'ALLARME' else 'grey')) }}
+            content: "{{ states('sensor.f1_v6_fsm') }}"
+          - type: template
+            icon: mdi:thermometer-alert
+            icon_color: "{{ 'red' if is_state('binary_sensor.f1_v6_allarme_temperatura', 'on') else 'green' }}"
+            content: "{{ 'Fuori range' if is_state('binary_sensor.f1_v6_allarme_temperatura', 'on') else 'In range' }}"
+          - type: conditional
+            conditions:
+              - entity: binary_sensor.f1_v6_sensore_guasto
+                state: "on"
+            chip:
+              type: template
+              icon: mdi:thermometer-off
+              icon_color: red
+              content: Sensore guasto
+          - type: template
+            icon: mdi:chip
+            icon_color: grey
+            content: "fw {{ states('sensor.f1_v6_firmware') }}"
+
+      # ── MODALITÀ ─────────────────────────────────────────────────────────
+      - type: custom:state-switch
+        entity: input_select.f1_v6_modalita
+        default: Produzione
+        states:
+          Produzione:
+            type: vertical-stack
+            cards:
+              - type: custom:mushroom-template-card
+                primary: "Modalità Produzione"
+                secondary: >-
+                  Parametri di controllo bloccati, esperimenti disattivati, allarmi completi via email.
+                  Controllo attivo: {{ states('sensor.f1_v6_modo_controllo_attivo') }}.
+                icon: mdi:beer
+                icon_color: amber
+                multiline_secondary: true
+                tap_action:
+                  action: none
+              - type: custom:mushroom-template-card
+                primary: Passa a Didattica
+                secondary: Solo se nel fermentatore non c'è birra
+                icon: mdi:school
+                icon_color: purple
+                layout: horizontal
+                tap_action:
+                  action: perform-action
+                  perform_action: script.f1_v6_lab_passa_a_didattica
+                  confirmation:
+                    text: >-
+                      Confermi che nel fermentatore F1 NON c'è birra? In Didattica si possono cambiare
+                      algoritmo e parametri e fare gradini di temperatura; l'allarme di scostamento non
+                      manda email.
+          Collaudo:
+            type: custom:mushroom-template-card
+            primary: "Modalità Collaudo"
+            secondary: >-
+              {% set s = states('sensor.f1_collaudo_sessione') %}
+              {% if s in ['in corso', 'in chiusura'] %}In corso: {{ state_attr('sensor.f1_collaudo_sessione', 'test') }}.
+              {% else %}Nessun test in corso.{% endif %} Parametri ed esperimenti bloccati. Tocca per aprire F1 Collaudo.
+            icon: mdi:clipboard-check-multiple
+            icon_color: blue
+            multiline_secondary: true
+            tap_action:
+              action: navigate
+              navigation_path: /f1-collaudo/collaudo
+          Didattica:
+            type: vertical-stack
+            cards:
+              - type: custom:mushroom-template-card
+                primary: "Modalità Didattica"
+                secondary: >-
+                  Preset, parametri ed esperimenti sbloccati. Sicurezze del firmware sempre attive
+                  (limiti 36 / −1 °C, sensore, tempi minimi dei relè). Allarme di scostamento solo in HA, senza email.
+                icon: mdi:school
+                icon_color: purple
+                multiline_secondary: true
+                tap_action:
+                  action: none
+              - type: custom:mushroom-template-card
+                primary: Torna in Produzione
+                secondary: Applica on/off con isteresi 0,5 °C e blocca i parametri
+                icon: mdi:beer
+                icon_color: amber
+                layout: horizontal
+                tap_action:
+                  action: perform-action
+                  perform_action: script.f1_v6_lab_passa_a_produzione
+                  confirmation:
+                    text: >-
+                      Tornare in Produzione? Chiude l'esperimento in corso, applica al fermentatore
+                      on/off con isteresi 0,5 °C e blocca i parametri. Il profilo in corso non cambia.
+
+      # ── MISURE ───────────────────────────────────────────────────────────
+      - type: horizontal-stack
+        cards:
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.f1_v6_temperatura') }} °C"
+            secondary: Temperatura
+            icon: mdi:thermometer
+            icon_color: >-
+              {% set d = states('sensor.f1_v6_scostamento_assoluto') | float(none) %}
+              {{ 'grey' if d is none else ('green' if d < 0.5 else ('orange' if d < 1.5 else 'red')) }}
+            tap_action:
+              action: more-info
+              entity: sensor.f1_v6_temperatura
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.f1_v6_setpoint') }} °C"
+            secondary: Setpoint
+            icon: mdi:target
+            icon_color: blue
+            tap_action:
+              action: more-info
+              entity: sensor.f1_v6_setpoint
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.f1_v6_errore') | float(0) | round(2) }} °C"
+            secondary: Errore SP−T
+            icon: mdi:delta
+            icon_color: >-
+              {% set e = states('sensor.f1_v6_errore') | float(0) %}
+              {{ 'orange' if e > 0.05 else ('light-blue' if e < -0.05 else 'green') }}
+            tap_action:
+              action: more-info
+              entity: sensor.f1_v6_errore
+
+      - type: horizontal-stack
+        cards:
+          - type: custom:mushroom-template-card
+            primary: "{{ 'Acceso' if is_state('binary_sensor.f1_v6_riscaldatore', 'on') else 'Spento' }}"
+            secondary: "Caldo · duty {{ states('sensor.f1_v6_duty_riscaldatore') | float(0) | round(0) }} %"
+            icon: mdi:radiator
+            icon_color: "{{ 'orange' if is_state('binary_sensor.f1_v6_riscaldatore', 'on') else 'disabled' }}"
+            tap_action:
+              action: none
+          - type: custom:mushroom-template-card
+            primary: "{{ 'Acceso' if is_state('binary_sensor.f1_v6_refrigeratore', 'on') else 'Spento' }}"
+            secondary: "Freddo · duty {{ states('sensor.f1_v6_duty_refrigeratore') | float(0) | round(0) }} %"
+            icon: mdi:snowflake
+            icon_color: "{{ 'light-blue' if is_state('binary_sensor.f1_v6_refrigeratore', 'on') else 'disabled' }}"
+            tap_action:
+              action: none
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.f1_v6_uscita_controllore') | float(0) | round(0) }} %"
+            secondary: "Uscita {{ states('sensor.f1_v6_modo_controllo_attivo') }}"
+            icon: mdi:tune-vertical
+            icon_color: >-
+              {% set u = states('sensor.f1_v6_uscita_controllore') | float(0) %}
+              {{ 'orange' if u > 0 else ('light-blue' if u < 0 else 'disabled') }}
+            tap_action:
+              action: none
+
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Ultime 12 ore
+          show_states: false
+        graph_span: 12h
+        update_interval: 1min
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 260
+          legend:
+            show: true
+        yaxis:
+          - id: temp
+            decimals: 1
+          - id: rele
+            show: false
+            min: 0
+            max: 4
+        series:
+          - entity: sensor.f1_v6_temperatura
+            name: Temperatura
+            yaxis_id: temp
+            color: "#e53935"
+            stroke_width: 2
+          - entity: sensor.f1_v6_setpoint
+            name: Setpoint
+            yaxis_id: temp
+            color: "#1e88e5"
+            curve: stepline
+            stroke_width: 2
+          - entity: binary_sensor.f1_v6_riscaldatore
+            name: Caldo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#fb8c00"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+          - entity: binary_sensor.f1_v6_refrigeratore
+            name: Freddo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#29b6f6"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+
+      - type: custom:mushroom-template-card
+        primary: "{{ states('sensor.f1_v6_profilo') }} — {{ states('sensor.f1_v6_step') }}"
+        secondary: >-
+          {{ states('sensor.f1_v6_ore_totali') }} h dall'avvio · {{ states('sensor.f1_v6_ore_step') }} h nello step
+          · commutazioni relè {{ states('sensor.f1_v6_commutazioni_rele') }}
+        icon: mdi:flask
+        icon_color: teal
+        multiline_secondary: true
+        tap_action:
+          action: navigate
+          navigation_path: fermentazione
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # LABORATORIO — il controllore dal vivo
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Laboratorio
+    path: laboratorio
+    icon: mdi:function-variant
+    cards:
+
+      # ── SPIEGAZIONE DAL VIVO ─────────────────────────────────────────────
+      - type: markdown
+        content: |
+          {% set m = states('sensor.f1_v6_modo_controllo_attivo') %}
+          {% set T = states('sensor.f1_v6_temperatura') | float(0) %}
+          {% set sp = states('sensor.f1_v6_setpoint') | float(0) %}
+          {% set e = states('sensor.f1_v6_errore') | float(0) %}
+          {% set h = states('sensor.f1_v6_isteresi_attiva') | float(0) %}
+          {% set lato = 'caldo' if e >= 0 else 'freddo' %}
+          {% set kp = states('sensor.f1_v6_kp_' ~ lato ~ '_attivo') | float(0) %}
+          {% set ki = states('sensor.f1_v6_ki_' ~ lato ~ '_attivo') | float(0) %}
+          {% set kd = states('sensor.f1_v6_kd_' ~ lato ~ '_attivo') | float(0) %}
+          {% set p = states('sensor.f1_v6_termine_p') | float(0) %}
+          {% set i = states('sensor.f1_v6_termine_i') | float(0) %}
+          {% set d = states('sensor.f1_v6_termine_d') | float(0) %}
+          {% set u = states('sensor.f1_v6_uscita_controllore') | float(0) %}
+          {% set rc = is_state('binary_sensor.f1_v6_riscaldatore', 'on') %}
+          {% set rf = is_state('binary_sensor.f1_v6_refrigeratore', 'on') %}
+          {% set rele = 'caldo acceso' if rc else ('freddo acceso' if rf else 'relè spenti') %}
+          {% if not is_state('binary_sensor.f1_v6_controllo_attivo', 'on') %}
+          ## Controllore fermo
+
+          Il fermentatore non sta regolando (stato {{ states('sensor.f1_v6_fsm') }}) oppure il sensore non è
+          utilizzabile: i relè sono spenti. Avvia un profilo o un esperimento per vedere il controllore al lavoro.
+          {% elif m == 'on_off' %}
+          ## On/Off puro
+
+          **Regola:** sotto il setpoint caldo acceso, sopra freddo acceso. Nient'altro.
+
+          Adesso T = **{{ T }} °C**, SP = **{{ sp }} °C**, errore SP−T = **{{ e | round(2) }} °C** → {{ rele }}.
+
+          Senza isteresi basta il rumore del sensore (un gradino è 0,06 °C) per invertire la richiesta. Relè e pompa
+          sono protetti solo dai tempi minimi del firmware: acceso almeno 30 s, spento almeno 60 s, 60 s di attesa per
+          passare da caldo a freddo. Tieni d'occhio il contatore delle commutazioni:
+          **{{ states('sensor.f1_v6_commutazioni_rele') }}**.
+          {% elif m in ['on_off_hyst_sym', 'on_off_hyst_asym'] %}
+          ## On/Off con isteresi ±{{ h }} °C
+
+          - Il **freddo** si accende sopra SP + h = **{{ (sp + h) | round(2) }} °C** e si spegne quando torna a {{ sp }} °C.
+          - Il **caldo** si accende sotto SP − h = **{{ (sp - h) | round(2) }} °C** e si spegne quando torna a {{ sp }} °C.
+
+          Adesso T = **{{ T }} °C** → {{ rele }}. Tra le due soglie il controllore *ricorda* cosa stava facendo:
+          è questa memoria che evita le commutazioni continue.
+
+          Isteresi più larga = meno commutazioni ma oscillazione più ampia. In simulazione (20 L, setpoint 19 °C,
+          ambiente 24 °C) con h = 0,5: 19,03–19,47 °C e circa una commutazione l'ora.
+          {% elif m == 'P' %}
+          ## Proporzionale (P)
+
+          **u = Kp · e** = {{ kp }} × {{ e | round(3) }} = **{{ p | round(1) }} %** (lato {{ lato }})
+
+          Più errore, più potenza. L'uscita diventa un duty su una finestra di 10 minuti: con {{ u | abs | round(0) }} %
+          il relè resta acceso circa {{ (u | abs * 6) | round(0) }} s ogni 600 s. Sotto una soglia minima il relè resta spento.
+
+          **Limite del P:** per tenere acceso il relè serve un errore. Il P si ferma quindi sempre un po' lontano dal
+          setpoint (*errore a regime*). In simulazione con Kp 30: 19,3 °C invece di 19 in raffreddamento, 18,1–18,4 °C
+          in riscaldamento.
+          {% elif m in ['PI', 'PID', 'PD'] %}
+          ## {{ 'PID' if m == 'PID' else m }}
+
+          **u = P{{ ' + I' if m != 'PD' else '' }}{{ ' + D' if m != 'PI' else '' }}** = {{ p | round(1) }}{{ (' + ' ~ (i | round(1))) if m != 'PD' else '' }}{{ (' + (' ~ (d | round(2)) ~ ')') if m != 'PI' else '' }} = **{{ u | round(1) }} %** (lato {{ lato }})
+
+          - **P = Kp · e** = {{ kp }} × {{ e | round(3) }} = {{ p | round(1) }} %: reagisce all'errore di adesso.
+          {% if m != 'PD' %}- **I = Ki · ∫e dt** = {{ ki }} × {{ states('sensor.f1_v6_integrale') }} °C·s = {{ i | round(1) }} %: accumula
+            l'errore nel tempo e continua a spingere finché l'errore non è zero. È ciò che elimina l'errore a regime del P.
+            Anti-windup: con uscita già al 100 % l'integrale non cresce, e il termine I è limitato a ±50 %.
+          {% endif %}{% if m != 'PI' %}- **D = −Kd · dT/dt** = {{ d | round(2) }} %{% if kd > 0 %} (temperatura che varia di
+            {{ (-d / kd * 3600) | round(2) }} °C/h){% endif %}: guarda quanto velocemente cambia la temperatura e frena prima
+            di arrivare. È calcolato sulla misura, filtrato su 5 minuti: un cambio di setpoint non dà "calci".
+          {% endif %}
+
+          {% if m == 'PID' %}Con 20 L d'acqua la temperatura cambia di pochi centesimi al minuto: serve un Kd molto grande
+          (5000) per vedere un effetto, e in simulazione il PID si comporta quasi come il PI. La derivata serve dove la
+          dinamica è veloce o c'è un ritardo marcato.{% else %}Ki troppo alto rispetto a Kp: l'integrale si "carica" troppo e la
+          temperatura oscilla attorno al setpoint. Prova il preset *PI mal tarato*.{% endif %}
+          {% else %}
+          ## Modo {{ m }}
+          {% endif %}
+
+      # ── GRAFICO TEMPERATURA ──────────────────────────────────────────────
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Temperatura, setpoint, soglie e relè — 6 ore
+          show_states: true
+          colorize_states: true
+        graph_span: 6h
+        update_interval: 30s
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 300
+          legend:
+            show: true
+        yaxis:
+          - id: temp
+            decimals: 2
+          - id: rele
+            show: false
+            min: 0
+            max: 4
+        series:
+          - entity: sensor.f1_v6_temperatura
+            name: Temperatura
+            yaxis_id: temp
+            color: "#e53935"
+            stroke_width: 2
+          - entity: sensor.f1_v6_setpoint
+            name: Setpoint
+            yaxis_id: temp
+            color: "#1e88e5"
+            curve: stepline
+            stroke_width: 2
+          - entity: sensor.f1_v6_soglia_freddo
+            name: Accende freddo (SP+h)
+            yaxis_id: temp
+            color: "#29b6f6"
+            curve: stepline
+            stroke_width: 1
+            stroke_dash: 4
+            show:
+              in_header: false
+          - entity: sensor.f1_v6_soglia_caldo
+            name: Accende caldo (SP−h)
+            yaxis_id: temp
+            color: "#fb8c00"
+            curve: stepline
+            stroke_width: 1
+            stroke_dash: 4
+            show:
+              in_header: false
+          - entity: binary_sensor.f1_v6_riscaldatore
+            name: Caldo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#fb8c00"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+            show:
+              in_header: false
+          - entity: binary_sensor.f1_v6_refrigeratore
+            name: Freddo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#29b6f6"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+            show:
+              in_header: false
+
+      # ── GRAFICO TERMINI DEL CONTROLLORE ──────────────────────────────────
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Cosa decide il controllore — P, I, D e uscita (%)
+          show_states: true
+          colorize_states: true
+        graph_span: 6h
+        update_interval: 30s
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 260
+          legend:
+            show: true
+          annotations:
+            yaxis:
+              - y: 0
+                borderColor: "#9e9e9e"
+                strokeDashArray: 4
+        yaxis:
+          - min: -100
+            max: 100
+            decimals: 0
+        series:
+          - entity: sensor.f1_v6_uscita_controllore
+            name: Uscita
+            type: area
+            curve: stepline
+            color: "#607d8b"
+            opacity: 0.2
+            stroke_width: 1
+          - entity: sensor.f1_v6_termine_p
+            name: P
+            color: "#8e24aa"
+            stroke_width: 2
+          - entity: sensor.f1_v6_termine_i
+            name: I
+            color: "#43a047"
+            stroke_width: 2
+          - entity: sensor.f1_v6_termine_d
+            name: D
+            color: "#f9a825"
+            stroke_width: 2
+
+      # ── PARAMETRI: DIDATTICA (modificabili) ──────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_select.f1_v6_modalita
+            state: Didattica
+        card:
+          type: vertical-stack
+          cards:
+            - type: markdown
+              content: |
+                ### Parametri
+
+                1. Scegli un **preset** e premi *Carica preset*, oppure imposta i valori a mano.
+                2. Premi **Applica al fermentatore**. Con lo stesso algoritmo i valori cambiano al volo;
+                cambiando algoritmo con il controllo in marcia il fermentatore fa stop → nuovo algoritmo → start.
+            - type: entities
+              entities:
+                - entity: input_select.f1_v6_preset
+                  name: Preset
+            - type: custom:mushroom-template-card
+              primary: Carica preset
+              secondary: Copia i valori del preset qui sotto (non invia nulla)
+              icon: mdi:playlist-check
+              icon_color: purple
+              layout: horizontal
+              tap_action:
+                action: perform-action
+                perform_action: script.f1_v6_lab_carica_preset
+            - type: entities
+              entities:
+                - entity: input_select.f1_v6_modo_controllo
+                  name: Algoritmo
+                - entity: input_number.f1_v6_isteresi
+                  name: Isteresi on/off (°C)
+                - type: section
+                  label: Caldo (errore positivo, T sotto il setpoint)
+                - entity: input_number.f1_v6_kp_risc
+                  name: Kp caldo
+                - entity: input_number.f1_v6_ki_risc
+                  name: Ki caldo
+                - entity: input_number.f1_v6_kd_risc
+                  name: Kd caldo
+                - type: section
+                  label: Freddo (errore negativo, T sopra il setpoint)
+                - entity: input_number.f1_v6_kp_frigo
+                  name: Kp freddo
+                - entity: input_number.f1_v6_ki_frigo
+                  name: Ki freddo
+                - entity: input_number.f1_v6_kd_frigo
+                  name: Kd freddo
+            - type: custom:mushroom-template-card
+              primary: Applica al fermentatore
+              secondary: >-
+                {% if is_state('binary_sensor.f1_v6_modifiche_da_applicare', 'on') %}Da applicare: {{ state_attr('binary_sensor.f1_v6_modifiche_da_applicare', 'differenze') }}
+                {%- else %}Il fermentatore usa già questi valori{% endif %}
+              icon: mdi:upload
+              icon_color: "{{ 'orange' if is_state('binary_sensor.f1_v6_modifiche_da_applicare', 'on') else 'green' }}"
+              layout: horizontal
+              multiline_secondary: true
+              tap_action:
+                action: perform-action
+                perform_action: script.f1_v6_lab_applica
+                confirmation:
+                  text: >-
+                    Inviare algoritmo e parametri al fermentatore F1? Se cambia l'algoritmo con il controllo in
+                    marcia, il fermentatore si ferma e riparte con il nuovo.
+
+      # ── PARAMETRI ATTIVI (sempre, sola lettura) ──────────────────────────
+      - type: entities
+        title: Parametri attivi nel fermentatore
+        state_color: true
+        entities:
+          - type: conditional
+            conditions:
+              - entity: input_select.f1_v6_modalita
+                state: Produzione
+            row:
+              type: text
+              name: Modalità Produzione
+              text: modifiche bloccate
+              icon: mdi:lock
+          - entity: sensor.f1_v6_modo_controllo_attivo
+            name: Algoritmo
+          - entity: sensor.f1_v6_isteresi_attiva
+            name: Isteresi
+          - entity: binary_sensor.f1_v6_controllo_attivo
+            name: Controllore in funzione
+          - type: section
+            label: Caldo
+          - entity: sensor.f1_v6_kp_caldo_attivo
+            name: Kp
+          - entity: sensor.f1_v6_ki_caldo_attivo
+            name: Ki
+          - entity: sensor.f1_v6_kd_caldo_attivo
+            name: Kd
+          - type: section
+            label: Freddo
+          - entity: sensor.f1_v6_kp_freddo_attivo
+            name: Kp
+          - entity: sensor.f1_v6_ki_freddo_attivo
+            name: Ki
+          - entity: sensor.f1_v6_kd_freddo_attivo
+            name: Kd
+          - type: section
+            label: Stato interno
+          - entity: sensor.f1_v6_errore
+            name: Errore SP−T
+          - entity: sensor.f1_v6_integrale
+            name: Integrale ∫e dt
+          - entity: sensor.f1_v6_commutazioni_rele
+            name: Commutazioni relè
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ESPERIMENTI — gradino di setpoint e metriche
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Esperimenti
+    path: esperimenti
+    icon: mdi:flask-outline
+    cards:
+
+      - type: markdown
+        content: |
+          ## Esperimento a gradino
+
+          Si sposta il setpoint di colpo e si guarda come il controllore porta l'acqua al nuovo valore.
+          Per confrontare due algoritmi usa **lo stesso gradino**, partendo con l'acqua ferma al setpoint.
+          Con il fermentatore pieno d'acqua la risposta dura **ore**: il riepilogo si aggiorna da solo.
+
+          | Metrica | Significato |
+          |---|---|
+          | Sovraelongazione | di quanto la temperatura supera il nuovo setpoint |
+          | Assestamento | tempo per entrare in ±0,2 °C e restarci 30 minuti |
+          | Errore medio | media di \|T − SP\| dall'inizio: sintetizza precisione e rapidità |
+          | Commutazioni | accensioni dei relè: usura di relè e pompa |
+
+          **Percorso suggerito** (risultati attesi dalla simulazione su 20 L):
+
+          1. *On/Off, isteresi 0,5*: oscilla nella banda, non entra mai in ±0,2 °C; poche commutazioni.
+          2. *On/Off puro*: oscillazione più stretta, molte più commutazioni.
+          3. *P, Kp 30*: nessuna oscillazione ma si ferma prima del setpoint (errore a regime, 0,3–0,9 °C).
+          4. *PI consigliato*: l'integrale annulla l'errore a regime.
+          5. *PI mal tarato*: oscillazioni lente di circa ±1 °C.
+          6. *PID*: quasi uguale al PI: con 20 L d'acqua la derivata serve poco.
+
+      - type: custom:state-switch
+        entity: input_select.f1_v6_modalita
+        default: Produzione
+        states:
+          Produzione:
+            type: custom:mushroom-template-card
+            primary: Esperimenti disattivati
+            secondary: Disponibili solo in modalità Didattica, a fermentatore senza birra.
+            icon: mdi:lock
+            icon_color: amber
+            multiline_secondary: true
+            tap_action:
+              action: navigate
+              navigation_path: panoramica
+          Didattica:
+            type: vertical-stack
+            cards:
+              - type: entities
+                entities:
+                  - entity: input_number.f1_v6_lab_gradino
+                    name: Ampiezza del gradino
+              - type: horizontal-stack
+                cards:
+                  - type: custom:mushroom-template-card
+                    primary: Avvia gradino
+                    secondary: >-
+                      {% set sp = states('sensor.f1_v6_setpoint') | float(20) %}
+                      {% set n = [[sp + states('input_number.f1_v6_lab_gradino') | float(0), 2.0] | max, 30.0] | min %}
+                      {{ sp }} → {{ n | round(1) }} °C con {{ states('sensor.f1_v6_modo_controllo_attivo') }}
+                    icon: mdi:stairs
+                    icon_color: purple
+                    layout: vertical
+                    tap_action:
+                      action: perform-action
+                      perform_action: script.f1_v6_lab_gradino
+                      confirmation:
+                        text: >-
+                          Avviare il gradino? Il fermentatore passa a un profilo a temperatura costante al nuovo
+                          setpoint, sostituendo il profilo in corso.
+                  - type: custom:mushroom-template-card
+                    primary: Termina esperimento
+                    secondary: Salva le metriche nel registro
+                    icon: mdi:flag-checkered
+                    icon_color: "{{ 'green' if is_state('sensor.f1_v6_esperimento', 'in corso') else 'disabled' }}"
+                    layout: vertical
+                    tap_action:
+                      action: perform-action
+                      perform_action: script.f1_v6_lab_termina_esperimento
+
+      - type: markdown
+        title: Esperimento
+        content: |
+          {% set d = state_attr('sensor.f1_v6_esperimento', 'dati') %}
+          {% if d is not mapping or d.get('inizio_ts') is not number %}
+          Nessun esperimento registrato.
+          {% else %}
+          **{{ d.descrizione }}** — {{ states('sensor.f1_v6_esperimento') }}, avviato
+          {{ d.inizio_ts | timestamp_custom('%d/%m %H:%M') }}{% if d.get('fine_ts') is number %}, concluso {{ d.fine_ts | timestamp_custom('%d/%m %H:%M') }}{% endif %}
+
+          | | |
+          |---|---|
+          | Durata | {{ ((d.minuti or 0) / 60) | round(1) }} h |
+          | Setpoint | {{ d.sp_iniziale }} → {{ d.sp_finale }} °C |
+          | Temperatura iniziale | {{ d.t_iniziale }} °C |
+          | Massima / minima | {{ d.t_max }} / {{ d.t_min }} °C |
+          | Sovraelongazione | {{ d.sovraelongazione }} °C |
+          | Assestamento (±0,2 °C per 30 min) | {{ ((d.assestamento_min / 60) | round(1) ~ ' h') if d.assestamento_min is number else ('in banda da ' ~ (((d.ultimo_ts - d.in_banda_da) / 60) | round(0)) ~ ' min' if d.in_banda_da is number else 'non ancora') }} |
+          | Errore medio \|T−SP\| | {{ d.errore_medio if d.errore_medio is number else '—' }} °C |
+          | Commutazioni relè | {{ d.commutazioni }} |
+          | Controllo | {{ d.modo }} · lato {{ d.get('lato', '') }} · Kp {{ d.kp }} · Ki {{ d.ki }} · Kd {{ d.kd }} · isteresi {{ d.isteresi }} °C |
+          {% endif %}
+
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Risposta — 24 ore
+          show_states: true
+          colorize_states: true
+        graph_span: 24h
+        update_interval: 1min
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 300
+          legend:
+            show: true
+        yaxis:
+          - id: temp
+            decimals: 1
+          - id: rele
+            show: false
+            min: 0
+            max: 4
+        series:
+          - entity: sensor.f1_v6_temperatura
+            name: Temperatura
+            yaxis_id: temp
+            color: "#e53935"
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 2min
+          - entity: sensor.f1_v6_setpoint
+            name: Setpoint
+            yaxis_id: temp
+            color: "#1e88e5"
+            curve: stepline
+            stroke_width: 2
+          - entity: sensor.f1_v6_soglia_freddo
+            name: SP+h
+            yaxis_id: temp
+            color: "#29b6f6"
+            curve: stepline
+            stroke_width: 1
+            stroke_dash: 4
+            show:
+              in_header: false
+          - entity: sensor.f1_v6_soglia_caldo
+            name: SP−h
+            yaxis_id: temp
+            color: "#fb8c00"
+            curve: stepline
+            stroke_width: 1
+            stroke_dash: 4
+            show:
+              in_header: false
+          - entity: binary_sensor.f1_v6_riscaldatore
+            name: Caldo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#fb8c00"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+            show:
+              in_header: false
+          - entity: binary_sensor.f1_v6_refrigeratore
+            name: Freddo
+            yaxis_id: rele
+            type: area
+            curve: stepline
+            color: "#29b6f6"
+            opacity: 0.25
+            stroke_width: 0
+            transform: "return x === 'on' ? 1 : 0;"
+            show:
+              in_header: false
+
+      - type: logbook
+        title: Registro del laboratorio
+        hours_to_show: 720
+        entities:
+          - sensor.f1_v6_esperimento
+          - input_select.f1_v6_modalita
+          - sensor.f1_v6_modo_controllo_attivo
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # FERMENTAZIONE — avvio, pausa, stop (stessi script della dashboard F1 V6)
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Fermentazione
+    path: fermentazione
+    icon: mdi:beer
+    cards:
+
+      - type: custom:state-switch
+        entity: sensor.f1_v6_fsm
+        default: default
+        states:
+          RUNNING:
+            type: custom:mushroom-template-card
+            primary: "In corso — {{ states('sensor.f1_v6_profilo') }}"
+            secondary: >-
+              Step {{ states('sensor.f1_v6_step') }} · {{ states('sensor.f1_v6_ore_totali') }} h totali
+              · controllo {{ states('sensor.f1_v6_modo_controllo_attivo') }}
+            icon: mdi:beer
+            icon_color: green
+            multiline_secondary: true
+            tap_action:
+              action: none
+          HOLDING:
+            type: custom:mushroom-template-card
+            primary: "Profilo completato — {{ states('sensor.f1_v6_profilo') }}"
+            secondary: Il fermentatore mantiene l'ultima temperatura (HOLDING)
+            icon: mdi:pause-circle
+            icon_color: orange
+            tap_action:
+              action: none
+          STOPPED:
+            type: custom:mushroom-template-card
+            primary: Fermo
+            secondary: Relè spenti. Scegli profilo o temperatura e premi Avvia.
+            icon: mdi:stop-circle-outline
+            icon_color: grey
+            tap_action:
+              action: none
+          ALLARME:
+            type: custom:mushroom-template-card
+            primary: "ALLARME — risolvi prima di avviare"
+            secondary: Controlla il sensore DS18B20
+            icon: mdi:alarm-light
+            icon_color: red
+            tap_action:
+              action: none
+          default:
+            type: custom:mushroom-template-card
+            primary: "Stato {{ states('sensor.f1_v6_fsm') }}"
+            secondary: "{{ 'Online' if is_state('binary_sensor.f1_v6_online', 'on') else 'ESP32 non connesso' }}"
+            icon: mdi:beer-outline
+            icon_color: disabled
+            tap_action:
+              action: none
+
+      - type: horizontal-stack
+        cards:
+          - type: custom:mushroom-template-card
+            primary: >-
+              {% set s = states('input_select.f1_v6_stato_controllo') %}
+              {{ {'idle': 'Pronto', 'in_corso': 'In corso', 'in_pausa': 'In pausa'}.get(s, s) }}
+            secondary: Stato HA
+            icon: mdi:clipboard-play-outline
+            icon_color: >-
+              {% set s = states('input_select.f1_v6_stato_controllo') %}
+              {{ {'idle': 'blue', 'in_corso': 'green', 'in_pausa': 'orange'}.get(s, 'grey') }}
+            tap_action:
+              action: none
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.f1_v6_ack') | truncate(45, true, '…') }}"
+            secondary: Ultima risposta ESP32
+            icon: >-
+              {{ 'mdi:alert-circle' if 'error' in states('sensor.f1_v6_ack') else 'mdi:check-circle' }}
+            icon_color: "{{ 'red' if 'error' in states('sensor.f1_v6_ack') else 'green' }}"
+            tap_action:
+              action: more-info
+              entity: sensor.f1_v6_ack
+
+      # ── CONFERMA STOP ────────────────────────────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.f1_v6_conferma_stop
+            state: "on"
+        card:
+          type: vertical-stack
+          cards:
+            - type: markdown
+              content: |
+                ## Confermi lo stop?
+
+                **{{ states('input_text.f1_v6_profilo_attivo') }}** viene fermato: relè spenti, step
+                "{{ states('sensor.f1_v6_step') }}" interrotto. Non si riprende dallo stesso punto.
+            - type: grid
+              columns: 2
+              square: false
+              cards:
+                - type: button
+                  name: CONFERMA STOP
+                  icon: mdi:stop-circle
+                  icon_height: 48px
+                  card_mod:
+                    style: |
+                      ha-card { background: #b71c1c; color: white; }
+                  tap_action:
+                    action: perform-action
+                    perform_action: script.f1_v6_stop_fermentazione
+                - type: button
+                  name: Annulla
+                  icon: mdi:close-circle
+                  icon_height: 48px
+                  tap_action:
+                    action: perform-action
+                    perform_action: input_boolean.turn_off
+                    target:
+                      entity_id: input_boolean.f1_v6_conferma_stop
+
+      # ── AVVIO ────────────────────────────────────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_select.f1_v6_stato_controllo
+            state: idle
+          - condition: state
+            entity: input_boolean.f1_v6_conferma_stop
+            state: "off"
+          - condition: state
+            entity: input_select.f1_v6_modalita
+            state_not: Collaudo
+        card:
+          type: vertical-stack
+          cards:
+            - type: markdown
+              content: |
+                ### Avvia
+
+                Algoritmo che verrà usato: **{{ states('input_select.f1_v6_modo_controllo') }}**
+                {%- if states('input_select.f1_v6_modo_controllo') in ['on_off_isteresi'] %}, isteresi {{ states('input_number.f1_v6_isteresi') }} °C{% endif %}.
+                {% if is_state('input_select.f1_v6_modalita', 'Produzione') %}Per la birra si usa on/off con isteresi 0,5 °C (preset di produzione).{% else %}Si cambia nella vista Laboratorio.{% endif %}
+            - type: custom:mushroom-entity-card
+              entity: input_boolean.f1_v6_modo_costante
+              name: Temperatura costante
+              icon: mdi:thermometer-check
+              tap_action:
+                action: toggle
+            - type: conditional
+              conditions:
+                - condition: state
+                  entity: input_boolean.f1_v6_modo_costante
+                  state: "on"
+              card:
+                type: entities
+                entities:
+                  - entity: input_number.f1_v6_temp_costante
+                    name: Temperatura
+            - type: conditional
+              conditions:
+                - condition: state
+                  entity: input_boolean.f1_v6_modo_costante
+                  state: "off"
+              card:
+                type: entities
+                entities:
+                  - entity: input_select.f1_v6_profilo_scelto
+                    name: Profilo
+            - type: entities
+              entities:
+                - entity: input_boolean.f1_v6_usa_avvio_custom
+                  name: Data di avvio personalizzata
+                - entity: input_datetime.f1_v6_avvio_datetime
+                  name: Data/ora di avvio
+            - type: button
+              name: Avvia
+              icon: mdi:play-circle
+              icon_height: 56px
+              card_mod:
+                style: |
+                  ha-card { background: #1b5e20; color: white; }
+              tap_action:
+                action: perform-action
+                perform_action: script.f1_v6_avvia_unified
+                confirmation:
+                  text: Avviare il fermentatore F1 con le impostazioni scelte?
+
+      # ── IN CORSO ─────────────────────────────────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_select.f1_v6_stato_controllo
+            state: in_corso
+          - condition: state
+            entity: input_boolean.f1_v6_conferma_stop
+            state: "off"
+        card:
+          type: grid
+          columns: 2
+          square: false
+          cards:
+            - type: button
+              name: Pausa
+              icon: mdi:pause-circle
+              icon_height: 48px
+              tap_action:
+                action: perform-action
+                perform_action: script.f1_v6_pausa_fermentazione
+            - type: button
+              name: Stop
+              icon: mdi:stop-circle
+              icon_height: 48px
+              card_mod:
+                style: |
+                  ha-card { background: #b71c1c; color: white; }
+              tap_action:
+                action: perform-action
+                perform_action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.f1_v6_conferma_stop
+
+      # ── IN PAUSA ─────────────────────────────────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_select.f1_v6_stato_controllo
+            state: in_pausa
+          - condition: state
+            entity: input_boolean.f1_v6_conferma_stop
+            state: "off"
+        card:
+          type: grid
+          columns: 2
+          square: false
+          cards:
+            - type: button
+              name: Riprendi
+              icon: mdi:play-circle-outline
+              icon_height: 48px
+              card_mod:
+                style: |
+                  ha-card { background: #1b5e20; color: white; }
+              tap_action:
+                action: perform-action
+                perform_action: script.f1_v6_riprendi_fermentazione
+            - type: button
+              name: Stop
+              icon: mdi:stop-circle
+              icon_height: 48px
+              card_mod:
+                style: |
+                  ha-card { background: #b71c1c; color: white; }
+              tap_action:
+                action: perform-action
+                perform_action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.f1_v6_conferma_stop
+
+      - type: entities
+        title: Profilo
+        entities:
+          - entity: input_text.f1_v6_profilo_attivo
+            name: Profilo attivo (HA)
+          - entity: sensor.f1_v6_profilo
+            name: Profilo nel fermentatore
+          - entity: sensor.f1_v6_step
+            name: Step
+          - entity: sensor.f1_v6_setpoint
+            name: Setpoint
+          - entity: sensor.f1_v6_avvio_data
+            name: Avviato il
+          - entity: sensor.f1_v6_giorni_totali
+            name: Giorni dall'avvio
+          - entity: sensor.f1_v6_giorni_step
+            name: Giorni nello step
+
+      - type: entities
+        title: Allarme di temperatura
+        entities:
+          - entity: binary_sensor.f1_v6_allarme_temperatura
+            name: Fuori range
+          - entity: sensor.f1_v6_scostamento_assoluto
+            name: Scostamento |T−SP|
+          - entity: binary_sensor.f1_v6_in_avvicinamento
+            name: In avvicinamento al setpoint
+          - entity: input_number.f1_v6_soglia_scostamento
+            name: Soglia
+          - entity: input_number.f1_v6_minuti_scostamento
+            name: Per almeno
+          - type: button
+            name: Email di prova
+            icon: mdi:email-check
+            action_name: Invia
+            tap_action:
+              action: perform-action
+              perform_action: script.test_email_alert
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # DIAGNOSTICA
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Diagnostica
+    path: diagnostica
+    icon: mdi:stethoscope
+    cards:
+
+      - type: entities
+        title: Collegamento
+        state_color: true
+        entities:
+          - entity: binary_sensor.f1_v6_online
+            name: MQTT (availability)
+          - entity: binary_sensor.f1_v6_dati_in_arrivo
+            name: Dati in arrivo (ultimi 5 min)
+          - entity: sensor.f1_v6_rssi
+            name: Segnale WiFi
+          - entity: sensor.f1_v6_uptime
+            name: Uptime
+          - entity: sensor.f1_v6_causa_ultimo_reset
+            name: Causa ultimo riavvio
+          - entity: sensor.f1_v6_firmware
+            name: Firmware
+          - entity: sensor.f1_v6_hardware_target
+            name: Hardware
+          - entity: sensor.f1_v6_ack
+            name: Ultima risposta
+            secondary_info: last-changed
+
+      - type: entities
+        title: Sensore e sicurezza
+        state_color: true
+        entities:
+          - entity: binary_sensor.f1_v6_sensore_guasto
+            name: Sensore non utilizzabile
+          - entity: sensor.f1_v6_eta_lettura
+            name: Età dell'ultima lettura
+          - entity: binary_sensor.f1_v6_allarme
+            name: Allarme firmware
+          - entity: sensor.f1_v6_allarme_tipo
+            name: Tipo allarme
+          - entity: sensor.f1_v6_commutazioni_rele
+            name: Commutazioni relè
+
+      - type: markdown
+        title: Sicurezze sempre attive (firmware)
+        content: |
+          Valgono in Produzione e in Didattica, qualunque algoritmo sia scelto:
+
+          - relè spenti se la lettura del sensore è più vecchia di 20 s o non valida;
+          - relè spenti fuori dai limiti assoluti **36 °C / −1 °C**, setpoint sempre tra 0 e 35 °C;
+          - tempi minimi dei relè: acceso ≥ 30 s, spento ≥ 60 s, 60 s di attesa per invertire caldo/freddo;
+          - watchdog: riavvio automatico se il programma si blocca per 60 s;
+          - comandi vecchi o ripetuti scartati (timestamp oltre 10 minuti, request_id già visto).
+
+          In Home Assistant: allarme se lo scostamento supera {{ states('input_number.f1_v6_soglia_scostamento') }} °C
+          per {{ states('input_number.f1_v6_minuti_scostamento') | int }} minuti senza avvicinamento, se l'ESP32 va
+          offline, se i dati si fermano per 5 minuti, se il sensore non è utilizzabile, se ci sono riavvii anomali.
+
+      - type: entities
+        title: Ultime 24 ore
+        entities:
+          - entity: sensor.f1_v6_temp_stats_24h
+            name: Temperatura media
+          - entity: sensor.f1_v6_delta_stats_24h
+            name: Escursione
+          - entity: sensor.f1_v6_risc_ratio_24h
+            name: Caldo acceso (%)
+          - entity: sensor.f1_v6_frigo_ratio_24h
+            name: Freddo acceso (%)
+          - entity: sensor.f1_v6_risc_count_24h
+            name: Accensioni caldo
+          - entity: sensor.f1_v6_frigo_count_24h
+            name: Accensioni freddo
+
+      - type: custom:mushroom-template-card
+        primary: Riavvia ESP32
+        secondary: Relè spenti durante il riavvio (circa 20 s)
+        icon: mdi:restart
+        icon_color: red
+        layout: horizontal
+        tap_action:
+          action: perform-action
+          perform_action: script.f1_v6_reboot
+          confirmation:
+            text: Riavviare l'ESP32 del fermentatore F1?

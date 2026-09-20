@@ -1,0 +1,219 @@
+# ============================================================
+# SCRIPTS V3 — Fermentatore F1
+# Nessun shell_command: mqtt.publish usa l'integrazione MQTT di HA
+# (già connessa a HiveMQ cloud). Nessun file Python necessario.
+# ============================================================
+
+# --- Avvia fermentazione ---
+# Parametri (fields):
+#   profilo_nome  (string)  nome del profilo da avviare
+#   avvio_epoch   (int)     timestamp Unix; 0 o omesso = usa now()
+#
+# Usato sia da UI (avvio nuovo) sia dall'automazione di risposta al riavvio
+# ESP32 (in quel caso avvio_epoch è quello originale salvato in input_number).
+f1_avvia_fermentazione:
+  alias: F1 Avvia Fermentazione
+  icon: mdi:play-circle
+  description: >
+    Seleziona il profilo e pubblica il payload completo su
+    fermentazione/f1/cmd/profilo via mqtt.publish.
+    Salva avvio_epoch in input_number.f1_avvio_epoch.
+  fields:
+    profilo_nome:
+      description: Nome del profilo da avviare
+      required: true
+      selector:
+        select:
+          options:
+            - ale_generica
+            - czech_pils_W34
+            - ipa_dryhop
+            - lager_generica
+            - stout_US04
+            - test_costante
+            - test_rampa_v
+            - test_wave_10_20m
+    avvio_epoch:
+      description: "Epoch Unix di avvio (0 o omesso = usa now)"
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 2147483647
+  sequence:
+    - variables:
+        epoch_effettivo: >-
+          {{ (avvio_epoch | int(0)) if (avvio_epoch | int(0)) > 0
+             else as_timestamp(now()) | int }}
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.f1_avvio_epoch
+      data:
+        value: "{{ epoch_effettivo }}"
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'ale_generica' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"ale_generica","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":5,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":19,"duration_hours":120},{"step":"Rampa Diacetile","temp":21,"ramp_hours":24},{"step":"Diacetyl Rest","temp":21,"duration_hours":72},{"step":"Rampa Cold Crash","temp":4,"ramp_hours":24},{"step":"Cold Crash","temp":4,"duration_hours":120},{"step":"Attesa Imbottigliamento","temp":4,"duration_hours":720}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'czech_pils_W34' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"czech_pils_W34","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":5,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":10,"duration_hours":168},{"step":"Rampa Diacetile","temp":16,"ramp_hours":48},{"step":"Diacetyl Rest","temp":16,"duration_hours":72},{"step":"Discesa Lagerizzazione","temp":1,"ramp_hours":120},{"step":"Lagerizzazione","temp":1,"duration_hours":720},{"step":"Attesa Imbottigliamento","temp":1,"duration_hours":720}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'ipa_dryhop' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"ipa_dryhop","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":5,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":19,"duration_hours":120},{"step":"Rampa Dry Hop","temp":21,"ramp_hours":24},{"step":"Dry Hopping","temp":21,"duration_hours":96},{"step":"Rampa Cold Crash","temp":4,"ramp_hours":24},{"step":"Cold Crash","temp":4,"duration_hours":72},{"step":"Attesa Imbottigliamento","temp":4,"duration_hours":720}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'lager_generica' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"lager_generica","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":5,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":11,"duration_hours":240},{"step":"Rampa Diacetile","temp":16,"ramp_hours":48},{"step":"Diacetyl Rest","temp":16,"duration_hours":72},{"step":"Discesa Lagerizzazione","temp":2,"ramp_hours":120},{"step":"Lagerizzazione","temp":2,"duration_hours":672}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'stout_US04' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"stout_US04","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":5,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":18,"duration_hours":96},{"step":"Rampa Diacetile","temp":21,"ramp_hours":24},{"step":"Diacetyl Rest","temp":21,"duration_hours":72},{"step":"Rampa Cold Crash","temp":4,"ramp_hours":24},{"step":"Cold Crash","temp":4,"duration_hours":96},{"step":"Attesa Imbottigliamento","temp":4,"duration_hours":720}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'test_costante' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"test_costante","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":3,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Primaria","temp":14,"duration_hours":48}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'test_rampa_v' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"test_rampa_v","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":3,"allarme_timeout_minuti":5,"steps":[{"step":"Fermentazione Iniziale","temp":20,"ramp_hours":48},{"step":"Fermentazione Primaria","temp":10,"duration_hours":48},{"step":"Rampa Diacetile","temp":25,"ramp_hours":48},{"step":"Completato","temp":25,"duration_hours":24}]}
+
+        - conditions:
+            - condition: template
+              value_template: "{{ profilo_nome == 'test_wave_10_20m' }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: fermentazione/f1/cmd/profilo
+                qos: 1
+                retain: false
+                payload: >-
+                  {"profilo":"test_wave_10_20m","avvio_epoch":{{ epoch_effettivo }},"isteresi":0.3,"min_cycle_minutes":1,"allarme_timeout_minuti":5,"steps":[{"step":"Test Hold Low 1","temp":12,"duration_hours":0.3333},{"step":"Test Ramp Up 1","temp":16,"ramp_hours":0.1667},{"step":"Test Hold High 1","temp":16,"duration_hours":0.3333},{"step":"Test Ramp Down 1","temp":12,"ramp_hours":0.1667},{"step":"Test Hold Low 2","temp":12,"duration_hours":0.3333},{"step":"Test Ramp Up 2","temp":15,"ramp_hours":0.1667},{"step":"Test Hold High 2","temp":15,"duration_hours":0.3333},{"step":"Test Ramp Down 2","temp":12,"ramp_hours":0.1667}]}
+
+      default:
+        - action: system_log.write
+          data:
+            level: warning
+            message: "F1 avvia_fermentazione: profilo '{{ profilo_nome }}' non riconosciuto."
+    - action: persistent_notification.create
+      data:
+        title: "F1: Comando Avvio Inviato"
+        message: >
+          Profilo '{{ profilo_nome }}' inviato all'ESP32.
+          In attesa di conferma ACK...
+        notification_id: f1_v3_avvio_inviato
+  mode: single
+
+# --- Stop fermentazione ---
+f1_stop_fermentazione:
+  alias: F1 Stop Fermentazione
+  icon: mdi:stop-circle
+  description: Invia il comando di stop all'ESP32 via MQTT.
+  sequence:
+    - action: mqtt.publish
+      data:
+        topic: fermentazione/f1/cmd/stop
+        payload: '{"motivo": "operatore"}'
+        qos: 1
+    - action: persistent_notification.create
+      data:
+        title: "F1: Comando Stop Inviato"
+        message: "Comando di stop inviato all'ESP32. Attesa conferma ACK."
+        notification_id: f1_v3_stop_inviato
+  mode: single
+
+# --- Ping ESP32 ---
+f1_ping_esp32:
+  alias: F1 Ping ESP32
+  icon: mdi:wifi-sync
+  description: Verifica la connettività con l'ESP32. La risposta arriva su fermentazione/f1/pong.
+  sequence:
+    - action: mqtt.publish
+      data:
+        topic: fermentazione/f1/cmd/ping
+        payload: '{}'
+        qos: 0
+  mode: single
+
+
+# --- Test email SMTP ---
+f1_test_email:
+  alias: F1 Test Email SMTP
+  icon: mdi:email-check
+  description: Invia una email di prova per verificare il canale SMTP.
+  sequence:
+    - action: notify.fermentazione_email
+      data:
+        title: "[HA V3] Test Email Fermentazione"
+        message: >
+          Test email da Home Assistant Fermentazione V3.
+          Data: {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+
+          Stato attuale:
+          - Profilo attivo:  {{ states('input_text.f1_profilo_attivo') }}
+          - Temp F1:         {{ states('sensor.f1_temperatura_reale') }}°C
+          - Setpoint:        {{ states('sensor.f1_setpoint_corrente') }}°C
+          - Step corrente:   {{ states('sensor.f1_step_corrente') }}
+          - Riscaldatore:    {{ states('binary_sensor.f1_riscaldatore') }}
+          - Refrigeratore:   {{ states('binary_sensor.f1_refrigeratore') }}
+
+          Server SMTP <smtp-server-ip>:25 — FUNZIONANTE.
+  mode: single

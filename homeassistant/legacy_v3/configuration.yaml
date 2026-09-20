@@ -1,0 +1,63 @@
+# ============================================================
+# FERMENTATORE V3 — Home Assistant Configuration
+# L'ESP32 è il termostato autonomo. HA fa da pannello di avvio
+# e monitoraggio. Modello PULL: ESP32 chiede il profilo a HA all'avvio.
+# ============================================================
+
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script:     !include scripts.yaml
+mqtt:       !include mqtt.yaml
+influxdb:   !include influxdb.yaml
+template:   !include templates.yaml
+
+notify:
+  - name: fermentazione_email
+    platform: smtp
+    server: !secret smtp_server
+    port: !secret smtp_port
+    timeout: 15
+    sender: !secret smtp_sender
+    sender_name: Home Assistant Fermentazione V3
+    recipient:
+      - !secret smtp_recipient
+    encryption: none
+
+# Selezione profilo da avviare
+input_select:
+  f1_profilo_scelto:
+    name: F1 Profilo da Avviare
+    options:
+      - ale_generica
+      - czech_pils_W34
+      - ipa_dryhop
+      - lager_generica
+      - stout_US04
+      - test_costante
+      - test_rampa_v
+      - test_wave_10_20m
+    icon: mdi:flask
+
+# Stato profilo corrente (aggiornato via ACK MQTT dall'ESP32)
+input_text:
+  f1_profilo_attivo:
+    name: F1 Profilo Attivo
+    initial: "Nessuno"
+    icon: mdi:information-outline
+
+# Timestamp Unix avvio fermentazione
+# Utilizzato dalla automazione v3_f1_rispondi_richiesta_profilo
+# per fornire all'ESP32 l'epoch originale anche dopo un riavvio.
+input_number:
+  f1_avvio_epoch:
+    name: F1 Epoch Avvio Fermentazione
+    min: 0
+    max: 2147483647
+    step: 1
+    initial: 0
+    mode: box
+    icon: mdi:clock-start

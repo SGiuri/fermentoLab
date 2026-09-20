@@ -1,0 +1,232 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# SENSORS — Sensori derivati (statistics + history_stats)
+# Finestra temporale fissa: ultime 24h
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 — STATISTICS (temperatura, delta, duty, PID)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: statistics
+  entity_id: sensor.f1_v6_temperatura
+  name: "F1 V6 Temp Stats 24h"
+  unique_id: f1_v6_temp_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f1_v6_delta_temperatura
+  name: "F1 V6 Delta Stats 24h"
+  unique_id: f1_v6_delta_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f1_v6_duty_riscaldatore
+  name: "F1 V6 Duty Risc Stats 24h"
+  unique_id: f1_v6_duty_risc_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f1_v6_duty_refrigeratore
+  name: "F1 V6 Duty Frigo Stats 24h"
+  unique_id: f1_v6_duty_frigo_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f1_v6_pid_output
+  name: "F1 V6 PID Stats 24h"
+  unique_id: f1_v6_pid_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 — HISTORY STATS riscaldatore (24h)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_riscaldatore
+  name: "F1 V6 Risc Time 24h"
+  unique_id: f1_v6_risc_time_24h
+  state: "on"
+  type: time
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_riscaldatore
+  name: "F1 V6 Risc Ratio 24h"
+  unique_id: f1_v6_risc_ratio_24h
+  state: "on"
+  type: ratio
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_riscaldatore
+  name: "F1 V6 Risc Count 24h"
+  unique_id: f1_v6_risc_count_24h
+  state: "on"
+  type: count
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 — HISTORY STATS refrigeratore (24h)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_refrigeratore
+  name: "F1 V6 Frigo Time 24h"
+  unique_id: f1_v6_frigo_time_24h
+  state: "on"
+  type: time
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_refrigeratore
+  name: "F1 V6 Frigo Ratio 24h"
+  unique_id: f1_v6_frigo_ratio_24h
+  state: "on"
+  type: ratio
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f1_v6_refrigeratore
+  name: "F1 V6 Frigo Count 24h"
+  unique_id: f1_v6_frigo_count_24h
+  state: "on"
+  type: count
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 F2 — STATISTICS (temperatura, delta, duty, PID)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: statistics
+  entity_id: sensor.f2_v6_temperatura
+  name: "F2 V6 Temp Stats 24h"
+  unique_id: f2_v6_temp_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f2_v6_delta_temperatura
+  name: "F2 V6 Delta Stats 24h"
+  unique_id: f2_v6_delta_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f2_v6_duty_riscaldatore
+  name: "F2 V6 Duty Risc Stats 24h"
+  unique_id: f2_v6_duty_risc_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f2_v6_duty_refrigeratore
+  name: "F2 V6 Duty Frigo Stats 24h"
+  unique_id: f2_v6_duty_frigo_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+- platform: statistics
+  entity_id: sensor.f2_v6_pid_output
+  name: "F2 V6 PID Stats 24h"
+  unique_id: f2_v6_pid_stats_24h
+  state_characteristic: mean
+  sampling_size: 2880
+  max_age:
+    hours: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 F2 — HISTORY STATS riscaldatore (24h)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_riscaldatore
+  name: "F2 V6 Risc Time 24h"
+  unique_id: f2_v6_risc_time_24h
+  state: "on"
+  type: time
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_riscaldatore
+  name: "F2 V6 Risc Ratio 24h"
+  unique_id: f2_v6_risc_ratio_24h
+  state: "on"
+  type: ratio
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_riscaldatore
+  name: "F2 V6 Risc Count 24h"
+  unique_id: f2_v6_risc_count_24h
+  state: "on"
+  type: count
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V6 F2 — HISTORY STATS refrigeratore (24h)
+# ─────────────────────────────────────────────────────────────────────────────
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_refrigeratore
+  name: "F2 V6 Frigo Time 24h"
+  unique_id: f2_v6_frigo_time_24h
+  state: "on"
+  type: time
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_refrigeratore
+  name: "F2 V6 Frigo Ratio 24h"
+  unique_id: f2_v6_frigo_ratio_24h
+  state: "on"
+  type: ratio
+  end: "{{ now() }}"
+  duration:
+    hours: 24
+
+- platform: history_stats
+  entity_id: binary_sensor.f2_v6_refrigeratore
+  name: "F2 V6 Frigo Count 24h"
+  unique_id: f2_v6_frigo_count_24h
+  state: "on"
+  type: count
+  end: "{{ now() }}"
+  duration:
+    hours: 24

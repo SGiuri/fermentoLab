@@ -1,0 +1,253 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F1 — COLLAUDO
+# Test reali sul fermentatore senza birra, eseguiti dall'app AppDaemon "collaudo_f1"
+# (hass_spec/appdaemon/collaudo_f1). Dashboard: hass_spec/dashboards/f1_v6_collaudo_dashboard.yaml
+#
+# - Modalità "Collaudo" (input_select.f1_v6_modalita, pacchetto _laboratorio): i test partono solo lì,
+#   gli script didattici sono bloccati, gli allarmi mandano le email come in Produzione.
+# - L'app pubblica sensor.f1_collaudo_sessione, sensor.f1_collaudo_verdetto e sensor.f1_collaudo_<test>.
+# - Gli script qui sotto parlano con l'app tramite l'evento f1_collaudo_comando.
+# - Gli ack del firmware arrivano all'app come evento f1_v6_ack.
+#
+# Solo F1: genera_f2.py non lo copia (l'app di collaudo lavora su un fermentatore).
+# =============================================================================
+
+input_boolean:
+  f1_collaudo_sel_comandi:
+    name: "F1 Collaudo · Protezione dei comandi"
+    icon: mdi:shield-check
+  f1_collaudo_sel_lager:
+    name: "F1 Collaudo · Tenuta lager 10 °C"
+    icon: mdi:snowflake-thermometer
+  f1_collaudo_sel_riavvio:
+    name: "F1 Collaudo · Riavvio durante la regolazione"
+    icon: mdi:restart
+  f1_collaudo_sel_stress_pompa:
+    name: "F1 Collaudo · Commutazioni della pompa"
+    icon: mdi:pump
+  f1_collaudo_sel_diacetile:
+    name: "F1 Collaudo · Sosta del diacetile 17 °C"
+    icon: mdi:radiator
+  f1_collaudo_sel_rampa:
+    name: "F1 Collaudo · Rampa di discesa"
+    icon: mdi:chart-line-variant
+  f1_collaudo_sel_modo_on_off:
+    name: "F1 Collaudo · On/Off senza isteresi"
+    icon: mdi:toggle-switch
+  f1_collaudo_sel_modo_p:
+    name: "F1 Collaudo · Proporzionale in freddo"
+    icon: mdi:alpha-p-box
+  f1_collaudo_sel_modo_pi:
+    name: "F1 Collaudo · PI in freddo"
+    icon: mdi:alpha-i-box
+  f1_collaudo_sel_modo_pid:
+    name: "F1 Collaudo · PID in freddo"
+    icon: mdi:alpha-d-box
+  f1_collaudo_sel_cold_crash:
+    name: "F1 Collaudo · Cold crash 2 °C"
+    icon: mdi:snowflake
+  f1_collaudo_sel_allarme_freddo:
+    name: "F1 Collaudo · Allarme se il freddo si ferma"
+    icon: mdi:snowflake-alert
+  f1_collaudo_sel_salute_sensore:
+    name: "F1 Collaudo · Salute del sensore"
+    icon: mdi:thermometer-check
+  f1_collaudo_sel_stress_rele:
+    name: "F1 Collaudo · Commutazioni rapide e sensore"
+    icon: mdi:electric-switch
+  f1_collaudo_sel_sensore_breve:
+    name: "F1 Collaudo · Sensore senza alimentazione"
+    icon: mdi:thermometer-off
+  f1_collaudo_sel_sensore_lungo:
+    name: "F1 Collaudo · Guasto prolungato del sensore"
+    icon: mdi:thermometer-alert
+  f1_collaudo_sel_wifi:
+    name: "F1 Collaudo · WiFi assente"
+    icon: mdi:wifi-off
+  f1_collaudo_sel_watchdog:
+    name: "F1 Collaudo · Blocco del programma"
+    icon: mdi:timer-alert
+  f1_collaudo_sel_corrente:
+    name: "F1 Collaudo · Mancanza di corrente"
+    icon: mdi:power-plug-off
+
+input_number:
+  f1_collaudo_temp_parcheggio:
+    name: "F1 Collaudo · Temperatura a fine collaudo"
+    min: 4
+    max: 20
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:parking
+
+template:
+  - sensor:
+      - name: "F1 Collaudo Selezione"
+        unique_id: f1_collaudo_selezione
+        icon: mdi:format-list-checks
+        unit_of_measurement: "h"
+        # Ore stimate dei test selezionati; attributi: elenco e presenza richiesta
+        state: >-
+          {% set ns = namespace(h=0) %}
+          {% for s in states.input_boolean if s.object_id.startswith('f1_collaudo_sel_') and s.state == 'on' %}
+            {% set ns.h = ns.h + (state_attr('sensor.f1_collaudo_' ~ s.object_id[16:], 'stima_h') | float(0)) %}
+          {% endfor %}
+          {{ ns.h | round(1) }}
+        attributes:
+          test: >-
+            {{ states.input_boolean | selectattr('object_id', 'match', 'f1_collaudo_sel_') | selectattr('state', 'eq', 'on')
+               | map(attribute='object_id') | map('replace', 'f1_collaudo_sel_', '') | list }}
+          presenza: >-
+            {% set ns = namespace(l=[]) %}
+            {% for s in states.input_boolean if s.object_id.startswith('f1_collaudo_sel_') and s.state == 'on' %}
+              {% set p = state_attr('sensor.f1_collaudo_' ~ s.object_id[16:], 'presenza') %}
+              {% if p and p != 'nessuna' %}{% set ns.l = ns.l + [state_attr('sensor.f1_collaudo_' ~ s.object_id[16:], 'nome') ~ ': ' ~ p] %}{% endif %}
+            {% endfor %}
+            {{ ns.l }}
+
+automation:
+  - id: f1_collaudo_inoltra_ack
+    alias: "F1 Collaudo - inoltra gli ack del firmware"
+    description: "Passa all'app di collaudo ogni risposta del firmware (esp/ack) come evento f1_v6_ack."
+    mode: queued
+    max: 50
+    triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v6/f1/esp/ack"
+    actions:
+      - event: f1_v6_ack
+        event_data:
+          payload: "{{ trigger.payload }}"
+
+  - id: f1_collaudo_app_ferma
+    alias: "F1 Collaudo - app di collaudo non risponde"
+    description: "Con un collaudo in corso, avvisa se l'app AppDaemon smette di aggiornare lo stato."
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ states('sensor.f1_collaudo_sessione') in ['in corso', 'in chiusura']
+             and (now() - states.sensor.f1_collaudo_sessione.last_reported) .total_seconds() > 600 }}
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: f1_collaudo_app_ferma
+          title: "F1 collaudo fermo"
+          message: >-
+            L'app di collaudo (AppDaemon) non aggiorna lo stato da oltre 10 minuti. F1 continua a regolare
+            con l'ultimo profilo ricevuto. Controllare l'add-on AppDaemon.
+
+script:
+  f1_collaudo_entra:
+    alias: "F1 Collaudo - Entra in modalità Collaudo"
+    description: "Solo senza birra nel fermentatore. Blocca gli script didattici, abilita i test."
+    icon: mdi:clipboard-check
+    mode: single
+    sequence:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f1_v6_modalita
+        data:
+          option: Collaudo
+      - action: logbook.log
+        data:
+          name: "F1 Collaudo"
+          message: "Modalità Collaudo attivata (fermentatore senza birra)."
+          entity_id: input_select.f1_v6_modalita
+
+  f1_collaudo_esci:
+    alias: "F1 Collaudo - Torna in Produzione"
+    icon: mdi:beer
+    mode: single
+    sequence:
+      - condition: template
+        value_template: "{{ states('sensor.f1_collaudo_sessione') not in ['in corso', 'in chiusura'] }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.f1_v6_modalita
+        data:
+          option: Produzione
+
+  f1_collaudo_avvia:
+    alias: "F1 Collaudo - Avvia i test selezionati"
+    icon: mdi:play-circle
+    mode: single
+    sequence:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: input_select.f1_v6_modalita
+                state: Collaudo
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: f1_collaudo_avviso
+              title: "F1 collaudo"
+              message: "Per avviare i test F1 deve essere in modalità Collaudo."
+          - stop: "Non in modalità Collaudo"
+      - event: f1_collaudo_comando
+        event_data:
+          azione: avvia
+          test: "{{ state_attr('sensor.f1_collaudo_selezione', 'test') }}"
+
+  f1_collaudo_interrompi:
+    alias: "F1 Collaudo - Interrompi"
+    icon: mdi:stop-circle
+    mode: single
+    sequence:
+      - event: f1_collaudo_comando
+        event_data:
+          azione: interrompi
+
+  f1_collaudo_salta:
+    alias: "F1 Collaudo - Salta il test in corso"
+    icon: mdi:skip-next-circle
+    mode: single
+    sequence:
+      - event: f1_collaudo_comando
+        event_data:
+          azione: salta
+
+  f1_collaudo_azzera:
+    alias: "F1 Collaudo - Azzera i risultati"
+    icon: mdi:broom
+    mode: single
+    sequence:
+      - event: f1_collaudo_comando
+        event_data:
+          azione: azzera
+
+  f1_collaudo_seleziona:
+    alias: "F1 Collaudo - Seleziona un gruppo di test"
+    icon: mdi:checkbox-multiple-marked
+    mode: single
+    fields:
+      gruppo:
+        description: "A (firmware attuale), B (firmware 6.4.0), C (manuali), tutti, nessuno"
+        example: A
+    sequence:
+      - variables:
+          gruppi:
+            A: [comandi, lager, riavvio, stress_pompa, diacetile, rampa, modo_on_off, modo_p, modo_pi, modo_pid,
+                cold_crash, allarme_freddo]
+            B: [salute_sensore, stress_rele, sensore_breve, sensore_lungo, wifi, watchdog]
+            C: [corrente]
+          scelti: >-
+            {% if gruppo == 'tutti' %}{{ gruppi.A + gruppi.B + gruppi.C }}
+            {% elif gruppo in gruppi %}{{ gruppi[gruppo] }}{% else %}{{ [] }}{% endif %}
+          tutti: "{{ gruppi.A + gruppi.B + gruppi.C }}"
+      - action: input_boolean.turn_off
+        target:
+          entity_id: "{{ tutti | map('regex_replace', '^', 'input_boolean.f1_collaudo_sel_') | list }}"
+      - if:
+          - condition: template
+            value_template: "{{ scelti | count > 0 }}"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: "{{ scelti | map('regex_replace', '^', 'input_boolean.f1_collaudo_sel_') | list }}"

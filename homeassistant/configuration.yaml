@@ -1,0 +1,486 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Pacchetti fermentatore V6 (allarmi e, dopo il firmware 6.2.0, entità)
+homeassistant:
+  packages: !include_dir_named packages
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script:     !include scripts.yaml
+scene:      !include scenes.yaml
+sensor:     !include sensors.yaml
+mqtt:       !include mqtt.yaml
+influxdb:   !include influxdb.yaml
+template:   !include templates.yaml
+
+# Dashboard YAML (file-based, sidebar). Copy the files from firmware/fermentatore_v6/hass_spec/dashboards/ into /config
+lovelace:
+  dashboards:
+    f1-collaudo:
+      mode: yaml
+      filename: f1_v6_collaudo_dashboard.yaml
+      title: F1 Collaudo
+      icon: mdi:clipboard-check-multiple
+      show_in_sidebar: true
+      require_admin: false
+    f1-laboratorio:
+      mode: yaml
+      filename: f1_v6_laboratorio_dashboard.yaml
+      title: F1 Laboratorio
+      icon: mdi:school
+      show_in_sidebar: true
+      require_admin: false
+
+notify:
+  - name: fermentazione_email
+    platform: smtp
+    server: !secret smtp_server
+    port: !secret smtp_port
+    timeout: 15
+    sender: !secret smtp_sender
+    sender_name: Home Assistant Fermentazione V3
+    recipient:
+      - !secret smtp_recipient
+    encryption: none
+
+# Comando shell per inviare il profilo all'ESP32 via MQTT
+shell_command:
+  avvia_fermentazione_v6: >
+    python3 /config/scripts_py/avvia_fermentazione_v6.py
+    --profilo "{{ profilo }}"
+    --avvio_epoch {{ avvio_epoch }}
+    --modo_controllo "{{ modo_controllo }}"
+    --isteresi {{ isteresi | default(0.3) }}
+    --min_cycle_sec {{ min_cycle_sec | default(5) }}
+    --kp_risc {{ kp_risc | default(5.0) }}
+    --ki_risc {{ ki_risc | default(0.005) }}
+    --kd_risc {{ kd_risc | default(0.0) }}
+    --kp_frigo {{ kp_frigo | default(1.0) }}
+    --ki_frigo {{ ki_frigo | default(0.001) }}
+    --kd_frigo {{ kd_frigo | default(0.0) }}
+    --pwm_period_sec {{ pwm_period_sec | default(60) }}
+    --allarme_timeout {{ allarme_timeout | default(30) }}
+  avvia_fermentazione_v6_f2: >
+    python3 /config/scripts_py/avvia_fermentazione_v6.py
+    --fermentatore f2
+    --profilo "{{ profilo }}"
+    --avvio_epoch {{ avvio_epoch }}
+    --modo_controllo "{{ modo_controllo }}"
+    --isteresi {{ isteresi | default(0.3) }}
+    --min_cycle_sec {{ min_cycle_sec | default(5) }}
+    --kp_risc {{ kp_risc | default(5.0) }}
+    --ki_risc {{ ki_risc | default(0.005) }}
+    --kd_risc {{ kd_risc | default(0.0) }}
+    --kp_frigo {{ kp_frigo | default(1.0) }}
+    --ki_frigo {{ ki_frigo | default(0.001) }}
+    --kd_frigo {{ kd_frigo | default(0.0) }}
+    --pwm_period_sec {{ pwm_period_sec | default(60) }}
+    --allarme_timeout {{ allarme_timeout | default(30) }}
+
+input_select:
+
+  # ── V6 ─────────────────────────────────────────────────────────────────
+  f1_v6_modo_controllo:
+    name: F1 V6 Modo Controllo
+    options:
+      - on_off
+      - on_off_isteresi
+      - P
+      - PI
+      - PID
+    icon: mdi:tune
+
+  f1_v6_stato_controllo:
+    name: F1 V6 Stato Controllo
+    options:
+      - idle
+      - in_corso
+      - in_pausa
+    initial: idle
+    icon: mdi:state-machine
+
+  f1_v6_profilo_scelto:
+    name: F1 V6 Profilo da Avviare
+    options:
+      - ale_generica
+      - czech_pils_W34
+      - ipa_dryhop
+      - lager_generica
+      - stout_US04
+      - test_costante
+      - test_rampa_v
+      - test_wave_10_20m
+    icon: mdi:flask
+
+  f1_v6_graph_span:
+    name: F1 V6 Span Grafico
+    options:
+      - "1h"
+      - "2h"
+      - "6h"
+      - "12h"
+      - "1d"
+      - "7d"
+      - "14d"
+      - "30d"
+    initial: "1d"
+    icon: mdi:chart-timeline-variant
+
+  # ── V6 F2 ───────────────────────────────────────────────────────────────
+  f2_v6_modo_controllo:
+    name: F2 V6 Modo Controllo
+    options:
+      - on_off
+      - on_off_isteresi
+      - P
+      - PI
+      - PID
+    initial: on_off_isteresi
+    icon: mdi:tune
+
+  f2_v6_stato_controllo:
+    name: F2 V6 Stato Controllo
+    options:
+      - idle
+      - in_corso
+      - in_pausa
+    initial: idle
+    icon: mdi:state-machine
+
+  f2_v6_profilo_scelto:
+    name: F2 V6 Profilo da Avviare
+    options:
+      - ale_generica
+      - czech_pils_W34
+      - ipa_dryhop
+      - lager_generica
+      - stout_US04
+      - test_costante
+      - test_rampa_v
+      - test_wave_10_20m
+    icon: mdi:flask
+
+  f2_v6_graph_span:
+    name: F2 V6 Span Grafico
+    options:
+      - "1h"
+      - "2h"
+      - "6h"
+      - "12h"
+      - "1d"
+      - "7d"
+      - "14d"
+      - "30d"
+    initial: "1d"
+    icon: mdi:chart-timeline-variant
+
+input_text:
+
+  # ── V6 ─────────────────────────────────────────────────────────────────
+  f1_v6_profilo_attivo:
+    name: F1 V6 Profilo Attivo
+    max: 64
+    icon: mdi:information-outline
+
+  # ── V6 F2 ───────────────────────────────────────────────────────────────
+  f2_v6_profilo_attivo:
+    name: F2 V6 Profilo Attivo
+    max: 64
+    icon: mdi:information-outline
+input_number:
+
+  # ── V6 ─────────────────────────────────────────────────────────────────
+  f1_v6_avvio_epoch:
+    name: F1 V6 Epoch Avvio
+    min: 0
+    max: 2147483647
+    step: 1
+    mode: box
+    icon: mdi:clock-start
+
+  f1_v6_isteresi:
+    name: F1 V6 Isteresi
+    min: 0.1
+    max: 3.0
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: slider
+    icon: mdi:delta
+
+  f1_v6_min_cycle_sec:
+    name: F1 V6 Min Cycle Sec
+    min: 1
+    max: 120
+    step: 1
+    initial: 5
+    unit_of_measurement: "s"
+    mode: box
+    icon: mdi:timer-outline
+
+  f1_v6_kp_risc:
+    name: F1 V6 kp Riscaldatore
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    icon: mdi:alpha-k-box-outline
+
+  f1_v6_ki_risc:
+    name: F1 V6 ki Riscaldatore
+    min: 0
+    max: 0.1
+    step: 0.0001
+    mode: box
+    icon: mdi:alpha-i-box-outline
+
+  f1_v6_kd_risc:
+    name: F1 V6 kd Riscaldatore
+    min: 0
+    max: 20000
+    step: 1
+    mode: box
+    icon: mdi:alpha-d-box-outline
+
+  f1_v6_kp_frigo:
+    name: F1 V6 kp Refrigeratore
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    icon: mdi:alpha-k-box-outline
+
+  f1_v6_ki_frigo:
+    name: F1 V6 ki Refrigeratore
+    min: 0
+    max: 0.1
+    step: 0.0001
+    mode: box
+    icon: mdi:alpha-i-box-outline
+
+  f1_v6_kd_frigo:
+    name: F1 V6 kd Refrigeratore
+    min: 0
+    max: 20000
+    step: 1
+    mode: box
+    icon: mdi:alpha-d-box-outline
+
+  f1_v6_pwm_period_sec:
+    name: F1 V6 PWM Period (s)
+    min: 10
+    max: 300
+    step: 5
+    initial: 60
+    unit_of_measurement: "s"
+    mode: box
+    icon: mdi:timer-outline
+
+  f1_v6_allarme_timeout_min:
+    name: F1 V6 Allarme Timeout (min)
+    min: 5
+    max: 120
+    step: 1
+    initial: 30
+    unit_of_measurement: "min"
+    mode: box
+    icon: mdi:alarm
+
+  f1_v6_temp_costante:
+    name: F1 V6 Temperatura Costante
+    min: 0
+    max: 35
+    step: 0.5
+    initial: 20.0
+    unit_of_measurement: "°C"
+    mode: slider
+    icon: mdi:thermometer-check
+
+  # ── V6 F2 ───────────────────────────────────────────────────────────────
+  f2_v6_avvio_epoch:
+    name: F2 V6 Epoch Avvio
+    min: 0
+    max: 2147483647
+    step: 1
+    mode: box
+    icon: mdi:clock-start
+
+  f2_v6_isteresi:
+    name: F2 V6 Isteresi
+    min: 0.1
+    max: 2.0
+    step: 0.1
+    initial: 0.3
+    unit_of_measurement: "°C"
+    mode: slider
+    icon: mdi:delta
+
+  f2_v6_min_cycle_sec:
+    name: F2 V6 Min Cycle Sec
+    min: 1
+    max: 120
+    step: 1
+    initial: 5
+    unit_of_measurement: "s"
+    mode: box
+    icon: mdi:timer-outline
+
+  f2_v6_kp_risc:
+    name: F2 V6 kp Riscaldatore
+    min: 0
+    max: 20
+    step: 0.1
+    initial: 5.0
+    mode: box
+    icon: mdi:alpha-k-box-outline
+
+  f2_v6_ki_risc:
+    name: F2 V6 ki Riscaldatore
+    min: 0
+    max: 0.1
+    step: 0.001
+    initial: 0.005
+    mode: box
+    icon: mdi:alpha-i-box-outline
+
+  f2_v6_kd_risc:
+    name: F2 V6 kd Riscaldatore
+    min: 0
+    max: 10
+    step: 0.1
+    initial: 0.0
+    mode: box
+    icon: mdi:alpha-d-box-outline
+
+  f2_v6_kp_frigo:
+    name: F2 V6 kp Refrigeratore
+    min: 0
+    max: 10
+    step: 0.1
+    initial: 1.0
+    mode: box
+    icon: mdi:alpha-k-box-outline
+
+  f2_v6_ki_frigo:
+    name: F2 V6 ki Refrigeratore
+    min: 0
+    max: 0.05
+    step: 0.001
+    initial: 0.001
+    mode: box
+    icon: mdi:alpha-i-box-outline
+
+  f2_v6_kd_frigo:
+    name: F2 V6 kd Refrigeratore
+    min: 0
+    max: 10
+    step: 0.1
+    initial: 0.0
+    mode: box
+    icon: mdi:alpha-d-box-outline
+
+  f2_v6_pwm_period_sec:
+    name: F2 V6 PWM Period (s)
+    min: 10
+    max: 300
+    step: 5
+    initial: 60
+    unit_of_measurement: "s"
+    mode: box
+    icon: mdi:timer-outline
+
+  f2_v6_allarme_timeout_min:
+    name: F2 V6 Allarme Timeout (min)
+    min: 5
+    max: 120
+    step: 1
+    initial: 30
+    unit_of_measurement: "min"
+    mode: box
+    icon: mdi:alarm
+
+  f2_v6_temp_costante:
+    name: F2 V6 Temperatura Costante
+    min: 0
+    max: 35
+    step: 0.5
+    initial: 20.0
+    unit_of_measurement: "°C"
+    mode: slider
+    icon: mdi:thermometer-check
+
+input_boolean:
+
+  # ── V6 ─────────────────────────────────────────────────────────────────
+  f1_v6_conferma_stop:
+    name: F1 V6 Stop Pendente
+    initial: false
+    icon: mdi:stop-circle
+
+  f1_v6_pending_salta_step:
+    name: F1 V6 Salta Step Pendente
+    initial: false
+    icon: mdi:skip-next-circle
+
+  f1_v6_usa_avvio_custom:
+    name: F1 V6 Usa Data Avvio Personalizzata
+    initial: false
+    icon: mdi:calendar-edit
+
+  # ── V6 F2 ───────────────────────────────────────────────────────────────
+  f2_v6_conferma_stop:
+    name: F2 V6 Stop Pendente
+    initial: false
+    icon: mdi:stop-circle
+
+  f2_v6_pending_salta_step:
+    name: F2 V6 Salta Step Pendente
+    initial: false
+    icon: mdi:skip-next-circle
+
+  f2_v6_usa_avvio_custom:
+    name: F2 V6 Usa Data Avvio Personalizzata
+    initial: false
+    icon: mdi:calendar-edit
+
+  f1_v6_modo_costante:
+    name: F1 V6 Modalità Temperatura Costante
+    initial: false
+    icon: mdi:thermometer-check
+
+  f2_v6_modo_costante:
+    name: F2 V6 Modalità Temperatura Costante
+    initial: false
+    icon: mdi:thermometer-check
+
+input_datetime:
+
+  # ── V6 ─────────────────────────────────────────────────────────────────
+  f1_v6_avvio_datetime:
+    name: F1 V6 Data/Ora Avvio Personalizzata
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-clock
+
+  # ── V6 F2 ───────────────────────────────────────────────────────────────
+  f2_v6_avvio_datetime:
+    name: F2 V6 Data/Ora Avvio Personalizzata
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-clock
+
+  log_export_start:
+    name: Log Export Inizio
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-start
+
+  log_export_end:
+    name: Log Export Fine
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-end
+

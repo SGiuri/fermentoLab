@@ -1,0 +1,176 @@
+DISPLAY DEMO — FERMENTATORE V4/V5
+Hardware: OLED SSD1306 128×64 px (0.96")
+Font header/corpo: 6×10 px (carattere fisso, ~21 char su 128px)
+Font temperatura:  9×15 px
+Font titolo boot:  7×13 px
+
+NOTA: le box qui sotto sono schematiche (non in scala).
+      Ogni riga del display = 128 pixel. Font 6×10 → ~21 car./riga.
+
+══════════════════════════════════════════════════════════════
+SCHERMATA BOOT  (stati: WIFI / MQTT / RICHIESTA_PROFILO)
+══════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────┐
+  │     FERMENTATORE V4         │  ← font 7×13, centrato; "v4.1.2" sotto
+  │     ────────────────        │
+  │       Connessione           │  ← linea 1 (centrata)
+  │          WiFi...            │  ← linea 2 (centrata)
+  └─────────────────────────────┘
+
+Varianti testo per ogni stato:
+  WIFI             → "Connessione" / "WiFi..."
+  MQTT             → "Connessione" / "MQTT..."
+  RICHIESTA_PROFILO → "Richiesta"   / "profilo..."
+
+
+══════════════════════════════════════════════════════════════
+SCHERMATA OPERATIVA — RUNNING
+══════════════════════════════════════════════════════════════
+
+ICONA RELÈ (in alto a destra, 12×12 px):
+  [fiamma]  = riscaldamento attivo   (riscaldatore_on = true)
+  [neve]    = raffreddamento attivo  (refrigeratore_on = true)
+  (assente) = entrambi spenti — nessun box disegnato
+
+SPINNER RUNNING: "R|", "R/", "R-", "R\" — aggiornato ogni 250 ms
+
+NOME PROFILO (header, da x=14 a x=114 = 101 px):
+  - Nome corto (≤101 px, ~16 car.): statico, allineato a sinistra
+  - Nome lungo (>101 px):  SCORRIMENTO da destra a sinistra
+      velocità ≈ 22 px/sec (45 ms/px), gap 20 px tra fine e reinizio
+
+────────────────── Esempio: riscaldamento ON ──────────────────
+
+  ┌─────────────────────────────┐
+  │R/ Stout US04          [🔥] │  ← spinner + nome profilo + fiamma
+  │─────────────────────────────│
+  │18.4°C         SP:18.5°C     │  ← temperatura grande / setpoint piccolo dx
+  │Ferm. Prim.          -2.3d   │  ← step abbreviato sx, giorni al prox step dx
+  │[########.........]     32%  │  ← barra avanzamento + percentuale
+  └─────────────────────────────┘
+
+────────────────── Esempio: raffreddamento ON ─────────────────
+
+  ┌─────────────────────────────┐
+  │R\ Stout US04          [❄]  │
+  │─────────────────────────────│
+  │22.1°C         SP:18.5°C     │
+  │Cold crash               0d  │  ← 0d = meno di 0.1 giorni
+  │[#####################] 100% │
+  └─────────────────────────────┘
+
+────────────────── Esempio: entrambi spenti ───────────────────
+
+  ┌─────────────────────────────┐
+  │R- Stout US04                │  ← nessuna icona a destra
+  │─────────────────────────────│
+  │18.5°C         SP:18.5°C     │
+  │Maturaz.             -0.5d   │
+  │[##############....]    70%  │
+  └─────────────────────────────┘
+
+────────────────── Esempio: nome lungo scorrevole ─────────────
+
+  Profilo: "Fermentazione Estiva con Lievito US-05" (39 car. = 234 px)
+  → scorre da destra a sinistra nell'area 101 px
+
+  t=0s  ┌─────────────────────────────┐
+        │R| ...con Lievito US-05 [🔥] │  ← parte del nome visibile
+        └─────────────────────────────┘
+  t=2s  ┌─────────────────────────────┐
+        │R/ Fermentazione Estiva [🔥] │
+        └─────────────────────────────┘
+  t=4s  ┌─────────────────────────────┐
+        │R- tazione Estiva con L [🔥] │
+        └─────────────────────────────┘
+
+  (poi ricomincia dall'inizio con pausa di 20 px)
+
+────────────────── Giorni al prossimo step ────────────────────
+
+  Il valore "-X.Xd" è mostrato SOLO se giorni_prossimo_step >= 0.
+  Sull'ultimo step del profilo (nessun step successivo) non appare.
+
+  Esempi:
+    -2.3d  → mancano 2.3 giorni al prossimo step
+    -0.1d  → mancano ~2.5 ore
+    -12.0d → mancano 12 giorni (valore max tipico)
+
+
+══════════════════════════════════════════════════════════════
+SCHERMATA OPERATIVA — HOLDING (profilo completato)
+══════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────┐
+  │HOLD Stout US04        [❄]  │  ← "HOLD" fisso + nome profilo scorrevole
+  │─────────────────────────────│     + icona relè se attivo
+  │18.5°C         SP:18.5°C     │
+  │Stout US04                   │  ← nome profilo abbreviato nel corpo
+  │Completato                   │
+  └─────────────────────────────┘
+
+  Area scorrimento HOLDING: x=26..114 (89 px, ~14 car. fissi)
+
+
+══════════════════════════════════════════════════════════════
+SCHERMATA OPERATIVA — STANDBY (nessun profilo attivo)
+══════════════════════════════════════════════════════════════
+
+  WiFi connesso:
+  ┌─────────────────────────────┐
+  │STANDBY                      │  ← nessun relè mostrato
+  │─────────────────────────────│
+  │18.4°C         SP:18.5°C     │
+  │Nessun profilo               │
+  │Target: 18.5°C               │
+  └─────────────────────────────┘
+
+  WiFi offline:
+  ┌─────────────────────────────┐
+  │STANDBY                      │
+  │─────────────────────────────│
+  │18.4°C         SP:18.5°C     │
+  │Nessun profilo               │
+  │[!] WiFi offline             │
+  └─────────────────────────────┘
+
+
+══════════════════════════════════════════════════════════════
+SCHERMATA ALLARME (sensore DS18B20 offline)
+══════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────┐
+  │█████ !! ALLARME !! █████    │  ← header INVERTITO (bianco su nero)
+  │                             │
+  │      Sensore offline        │
+  │      Riavvio in 25s         │  ← countdown decrescente
+  │      T: 22.3°C              │  ← ultima temp letta
+  └─────────────────────────────┘
+
+
+══════════════════════════════════════════════════════════════
+MAPPA PIXEL — RIGA HEADER (y=0..12)
+══════════════════════════════════════════════════════════════
+
+  x:  0        14            115  116       127
+      |         |              |  |          |
+  y:0 ┌─────────────────────────────────────┐
+      │RX  [nome profilo...............] [■] │
+  y:11│                                      │ ← baseline testo
+  y:12└──────────────────────────────────────┘
+  y:13 ─────────────────────────────────────   ← separatore orizzontale
+
+  RX     = "R" + spinner (|/−\), x=0..11 (2 car × 6px)
+  nome   = profilo completo, clip x=14..114 (101 px)
+  [■]    = box icona relè 12×12 px, x=116..127 (solo se relè attivo)
+             dentro: fiamma (riscalda) o fiocco neve (raffredda)
+
+
+══════════════════════════════════════════════════════════════
+MAPPA PIXEL — CORPO (y=14..63, stato RUNNING)
+══════════════════════════════════════════════════════════════
+
+  y=30  temperatura reale (font 9×15) sx  +  "SP:XX.X°C" (6×10) dx allineato
+  y=43  nome step abbreviato sx           +  "-X.Xd" (6×10) dx allineato
+  y=48..57  barra avanzamento 86×10 px    +  "XX%" (6×10) a x=89

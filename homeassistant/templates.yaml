@@ -1,0 +1,84 @@
+- sensor:
+
+    # ── V6 ─────────────────────────────────────────────────────────────────
+    - name: "F1 V6 Delta Temperatura"
+      unique_id: f1_v6_delta_temperatura
+      unit_of_measurement: "°C"
+      state_class: measurement
+      state: >
+        {% set t = states('sensor.f1_v6_temperatura') | float(none) %}
+        {% set s = states('sensor.f1_v6_setpoint') | float(none) %}
+        {{ (t - s) | round(2) if t is not none and s is not none else none }}
+      availability: >
+        {{ states('sensor.f1_v6_temperatura') not in ['unknown', 'unavailable']
+           and states('sensor.f1_v6_setpoint') not in ['unknown', 'unavailable'] }}
+
+    - name: "F1 V6 Giorni Step"
+      unique_id: f1_v6_giorni_step
+      unit_of_measurement: "giorni"
+      state_class: measurement
+      state: >
+        {% set ore = states('sensor.f1_v6_ore_step') | float(none) %}
+        {{ (ore / 24) | round(2) if ore is not none else none }}
+      availability: >
+        {{ states('sensor.f1_v6_ore_step') not in ['unknown', 'unavailable'] }}
+
+    - name: "F1 V6 Giorni Totali"
+      unique_id: f1_v6_giorni_totali
+      unit_of_measurement: "giorni"
+      state_class: measurement
+      state: >
+        {% set ore = states('sensor.f1_v6_ore_totali') | float(none) %}
+        {{ (ore / 24) | round(2) if ore is not none else none }}
+      availability: >
+        {{ states('sensor.f1_v6_ore_totali') not in ['unknown', 'unavailable'] }}
+
+    - name: "F1 V6 Avvio Data"
+      unique_id: f1_v6_avvio_data
+      state: >
+        {% set e = states('input_number.f1_v6_avvio_epoch') | int(0) %}
+        {% if e > 0 %}{{ e | timestamp_custom('%d/%m/%Y %H:%M') }}{% else %}—{% endif %}
+      availability: >
+        {{ states('input_number.f1_v6_avvio_epoch') not in ['unknown', 'unavailable'] }}
+
+    # ── V6 F2 ───────────────────────────────────────────────────────────────
+    - name: "F2 V6 Delta Temperatura"
+      unique_id: f2_v6_delta_temperatura
+      unit_of_measurement: "°C"
+      state_class: measurement
+      state: >
+        {% set t = states('sensor.f2_v6_temperatura') | float(none) %}
+        {% set s = states('sensor.f2_v6_setpoint') | float(none) %}
+        {{ (t - s) | round(2) if t is not none and s is not none else none }}
+      availability: >
+        {{ states('sensor.f2_v6_temperatura') not in ['unknown', 'unavailable']
+           and states('sensor.f2_v6_setpoint') not in ['unknown', 'unavailable'] }}
+
+    - name: "F2 V6 Giorni Step"
+      unique_id: f2_v6_giorni_step
+      unit_of_measurement: "giorni"
+      state_class: measurement
+      state: >
+        {% set ore = states('sensor.f2_v6_ore_step') | float(none) %}
+        {{ (ore / 24) | round(2) if ore is not none else none }}
+      availability: >
+        {{ states('sensor.f2_v6_ore_step') not in ['unknown', 'unavailable'] }}
+
+    - name: "F2 V6 Giorni Totali"
+      unique_id: f2_v6_giorni_totali
+      unit_of_measurement: "giorni"
+      state_class: measurement
+      state: >
+        {% set ore = states('sensor.f2_v6_ore_totali') | float(none) %}
+        {{ (ore / 24) | round(2) if ore is not none else none }}
+      availability: >
+        {{ states('sensor.f2_v6_ore_totali') not in ['unknown', 'unavailable'] }}
+
+    - name: "F2 V6 Avvio Data"
+      unique_id: f2_v6_avvio_data
+      state: >
+        {% set e = states('input_number.f2_v6_avvio_epoch') | int(0) %}
+        {% if e > 0 %}{{ e | timestamp_custom('%d/%m/%Y %H:%M') }}{% else %}—{% endif %}
+      availability: >
+        {{ states('input_number.f2_v6_avvio_epoch') not in ['unknown', 'unavailable'] }}
+

@@ -1,0 +1,19 @@
+Ref,Qty,Component,Specification,Note,Status
+U1,1,ESP32 DevKit V1 (ESP32-WROOM-32),30/38-pin dev board; powered from 5 V on VIN,Any vendor. Arduino board: "ESP32 Dev Module",F1 as built
+B1,1,DS18B20 waterproof probe,Stainless steel body; 3 wires (red VDD / yellow DQ / black GND); cable 1-3 m,Cable <= 3 m with the 4.7 kOhm pull-up,F1 as built
+R1,1,Resistor 4.7 kOhm 1/4 W,Pull-up between DQ and the switched VDD (GPIO25) - NOT to fixed 3V3,Fixed 3V3 makes the sensor parasitic-powered and the software power-cycle ineffective,F1 as built
+R2,1,Resistor 100 Ohm 1/4 W,In series with the DQ line (GPIO33 to probe),Line protection / ringing,Recommended (not verified on F1)
+C1,1,Ceramic capacitor 100 nF,Between switched VDD and GND at the probe terminal,Decoupling,Recommended (not verified on F1)
+C2,1,Capacitor between EN and GND,Value under validation on F1,Fix under test for the spontaneous resets; large values can break auto-reset during USB flashing,Under test on F1
+K1,1,2-channel relay module 5 V,Active LOW; opto-isolated type recommended; contacts 10 A / 250 V AC,IN1 = heating (GPIO16); IN2 = cooling pump (GPIO17),F1 as built
+DS1,1,OLED SSD1306 0.96 in 128x64,I2C address 0x3C; 4 pins (VCC/GND/SDA/SCL),Driven with U8g2 on GPIO21 (SDA) / GPIO22 (SCL),F1 as built
+PS1,1,AC-DC power supply 5 V >= 1 A,Panel-mount module (e.g. Hi-Link HLK-5M05 or Mean Well IRM-05-5) or a good 5 V / 2 A USB adapter,Supplies ESP32 VIN and the relay module,Type to be confirmed on F1
+FU0,1,Fuse T2 A 5x20 mm + holder,Mains input,,Recommended
+FU1 FU2,2,Fuse T500 mA 5x20 mm + holders,One per relay output,,Recommended
+Z1 Z2,2,RC snubber 100 Ohm + 100 nF X2 (275 V AC),In parallel with each load (not across the relay contacts),Under test on the pump,Recommended (under test)
+E1,1,Enclosure IP54 or better + cable glands + terminal blocks (L / N / PE / probe) + insulating barrier,Keep mains and low voltage in separate zones,,Recommended
+-,1,Wiring,Mains 3 x 0.75 mm2 (min.) for loads; shielded 3-core cable for the probe,,Recommended
+H1,1,Silicone heating belt 30-35 W / 230 V,Wrapped around the fermenter; on relay K1,Slow heating: cooling is the priority,F1 as built
+P1,1,Circulation pump 230 V 10-15 W,Pumps glycol through the fermenter jacket; on relay K2,,F1 as built
+CH1,1,Glycol chiller ~1/5 HP with its own thermostat,Always on; on a SEPARATE mains socket - it does not go through this enclosure,The controller only switches the pump (K2),F1 as built
+T1,1,Fermenter with glycol cooling jacket + propylene glycol + hoses,,Sized to the batch,F1 as built

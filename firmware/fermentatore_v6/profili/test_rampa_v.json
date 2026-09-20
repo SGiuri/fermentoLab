@@ -1,0 +1,24 @@
+{
+  "profilo": [
+    {
+      "step": "Fermentazione Iniziale",
+      "temp": 20,
+      "ramp_days": 2
+    },
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 10,
+      "duration_days": 2
+    },
+    {
+      "step": "Rampa Diacetile",
+      "temp": 25,
+      "ramp_days": 2
+    },
+    {
+      "step": "Completato",
+      "temp": 25,
+      "duration_days": 1
+    }
+  ]
+}
