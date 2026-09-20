@@ -45,7 +45,8 @@ Nel Lab si trovano in `/config/packages/` (`homeassistant: packages: !include_di
 |---|---|---|
 | `fermentatore_v6_f1_entita.yaml` | Entità MQTT di `esp/state`, `esp/controllo` (errore, P, I, D, uscita, guadagni e isteresi attivi) e `esp/availability`; sensore dei riavvii spontanei; automazioni offline, online, sensore guasto, riavvio anomalo, riavvio spontaneo | sì |
 | `fermentatore_v6_f1_allarmi.yaml` | Soglia e minuti di scostamento, istantanea ogni 30 min, "dati in arrivo", "in avvicinamento", allarme temperatura; automazioni fuori range, rientrata, dati fermi, dati ripresi | sì |
-| `fermentatore_v6_f1_laboratorio.yaml` | Modalità, preset, gradino, soglie SP±h, "modifiche da applicare", metriche dell'esperimento; script carica preset, applica, gradino, termina esperimento, passa a Didattica/Produzione | sì |
+| `fermentatore_v6_f1_laboratorio.yaml` | Modalità, preset, gradino, soglie SP±h, "modifiche da applicare", metriche dell'esperimento, pagella degli algoritmi; script carica preset, applica, gradino, termina esperimento, passa a Didattica/Produzione | sì |
+| `fermentatore_v6_f1_metriche.yaml` | Metriche dell'algoritmo su finestra di 2 h: accensioni all'ora, tempo acceso e duty misurato per relè, periodo e ampiezza dell'oscillazione, inversioni caldo↔freddo, scarto medio con segno (vedi §5) | sì (2026-09-20) |
 | `fermentatore_v6_f1_collaudo.yaml` | Selezione dei test, temperatura di parcheggio, inoltro degli ack all'app di collaudo, controllo che l'app sia viva; script entra/esci, avvia, interrompi, salta, azzera, seleziona gruppo | sì |
 | `fermentatore_v6_f2_*.yaml` | Copie F2 generate da `genera_f2.py` (il collaudo è escluso) | solo `_allarmi` |
 
@@ -82,10 +83,12 @@ Card personalizzate richieste: mushroom, apexcharts-card, card-mod, state-switch
 **F1 Laboratorio**
 - *Panoramica*: stato, modalità con i pulsanti di cambio (con conferma), misure, relè, grafico di 12 ore.
 - *Laboratorio*: spiegazione dal vivo dell'algoritmo attivo con i numeri correnti (On/Off, isteresi, P,
-  PI, PID); grafico di temperatura, setpoint, soglie SP±h e relè; grafico di P, I, D e uscita; in Didattica
-  preset e parametri con *Applica al fermentatore*; parametri attivi sempre in sola lettura.
+  PI, PID); grafico di temperatura, setpoint, soglie SP±h e relè; grafico di P, I, D e uscita; metriche
+  dell'algoritmo (oscillazione, accensioni, duty) con grafico di 12 ore; in Didattica preset e parametri con
+  *Applica al fermentatore*; parametri attivi sempre in sola lettura.
 - *Esperimenti*: gradino di setpoint con metriche (sovraelongazione, assestamento ±0,2 °C per 30 min,
-  errore medio, commutazioni), percorso didattico, registro dei risultati.
+  errore medio e a regime, commutazioni, accensioni e duty per relè, oscillazione), percorso didattico,
+  pagella degli algoritmi, registro dei risultati.
 - *Fermentazione*: avvio (nascosto in Collaudo), pausa, stop con conferma, profilo, allarme di scostamento,
   email di prova.
 - *Diagnostica*: collegamento, sensore, sicurezze del firmware, statistiche delle 24 ore, riavvio.
@@ -104,6 +107,56 @@ Card personalizzate richieste: mushroom, apexcharts-card, card-mod, state-switch
 
 *Applica al fermentatore*: con lo stesso algoritmo i parametri cambiano al volo; con un algoritmo diverso
 e il controllo in marcia lo script esegue stop → `control_set` → start, aspettando gli ack.
+
+### Metriche dell'algoritmo
+
+Pacchetto `fermentatore_v6_f1_metriche.yaml`, tutto calcolato in Home Assistant (nessuna modifica al
+firmware). Misura tre cose che vanno tenute separate:
+
+| Grandezza | Cosa misura | On/Off | P / PI / PID |
+|---|---|---|---|
+| **Oscillazione** | periodo e ampiezza picco-picco di T | ciclo limite sempre presente | P: smorzata. PI: oscillazioni lente all'inizio, poi nessuna. PID: meno sovraelongazione |
+| **Accensioni all'ora** | quante volte scatta il relè | uguale alle oscillazioni all'ora | **al massimo 6 per relè** (finestra di 600 s), qualunque sia il duty |
+| **Duty misurato** | quota di tempo acceso | cambia a ogni ciclo | è qui che gli algoritmi modulano |
+
+Il punto didattico: in P/PI/PID il numero di accensioni lo fissa la finestra, non l'algoritmo. Il controllore
+non commuta meno, cambia il duty.
+
+| Entità | Significato |
+|---|---|
+| `sensor.f1_v6_oscillazioni` | stato: `fermo`, `in misura`, `oscilla`, `nessuna oscillazione`; l'attributo `dati` contiene il rilevatore |
+| `sensor.f1_v6_periodo_oscillazione`, `_ampiezza_oscillazione`, `_oscillazioni_ora` | valori numerici (non disponibili se non oscilla) |
+| `sensor.f1_v6_accensioni_ora_riscaldatore`, `_refrigeratore` | accensioni all'ora, media sulle ultime 2 h |
+| `sensor.f1_v6_duty_misurato_riscaldatore`, `_refrigeratore` | tempo acceso / 2 h (diverso dal *Duty* istantaneo che il controllore richiede) |
+| `sensor.f1_v6_tempo_medio_acceso_riscaldatore`, `_refrigeratore` | durata media di un'accensione |
+| `sensor.f1_v6_inversioni_ora` | accensioni di un relè subito dopo l'altro (caldo↔freddo), all'ora |
+| `sensor.f1_v6_scarto_medio_con_segno` | media SP−T sulle ultime 2 h: ≠ 0 nel P (errore a regime), ≈ 0 nel PI |
+| `input_number.f1_v6_lab_soglia_osc` | escursione minima per contare un'oscillazione (0,15 °C) |
+
+**Come funziona il rilevatore.** Filtro a zig-zag sulle letture di temperatura: un picco è registrato quando T
+scende almeno della soglia sotto il massimo, una valle quando risale. Il periodo è la media degli intervalli
+picco→picco e valle→valle (non dipende dall'asimmetria tra la fase di raffreddamento e quella di
+riscaldamento), l'ampiezza è la media delle escursioni picco-valle. Serve almeno un'oscillazione completa
+(3 estremi). Si azzera se cambiano setpoint, algoritmo o parametri, se il controllo si ferma o se mancano dati
+per più di 10 minuti.
+
+**Limiti noti**
+- La finestra è di 2 ore fisse (`history_stats` accetta solo durate costanti): dopo un cambio di algoritmo le
+  metriche a finestra mescolano il prima e il dopo fino a 2 ore. Per confronti puliti c'è l'esperimento a
+  gradino, che misura dall'avvio.
+- Serve un'oscillazione con escursione chiaramente maggiore del rumore: il DS18B20 quantizza a 0,0625 °C. Con
+  escursioni sotto ~0,3 °C (on/off puro, isteresi 0,2) il rumore crea estremi in più e il periodo risulta
+  sottostimato. Provato su simulazione a 20 L: periodo entro l'1 % senza rumore, entro il 2 % con rumore
+  gaussiano di 0,03 °C per isteresi 0,5 e 1,0 °C, sottostimato del 34 % con isteresi 0,2 °C.
+- Periodi oltre circa 6 ore non si distinguono da una deriva lenta.
+- *Errore a regime* (media mobile di 60 minuti): ha senso per P, PI e PID; con l'on/off dipende dal punto del
+  ciclo in cui ci si ferma, e nella pagella quelle righe non ricevono la stella.
+- La **pagella** tiene le ultime 10 prove in memoria, una per configurazione e gradino: dopo un riavvio di
+  Home Assistant può ripartire vuota (il registro del laboratorio conserva comunque ogni risultato).
+- Verifiche: i template sono stati provati offline con Jinja su una simulazione a 20 L, poi installati nel Lab
+  il 2026-09-20 (nessun errore nel log, entità con valori coerenti su F1 reale, card rese dal motore di
+  template di HA). **Non ancora provati in HA**: un esperimento a gradino completo con la pagella (richiede
+  la modalità Didattica, quindi non durante il collaudo) e il comportamento della pagella dopo un riavvio.
 
 ## 6. Procedure
 
@@ -127,9 +180,25 @@ e il controllo in marcia lo script esegue stop → `control_set` → start, aspe
 3. Registrare le dashboard in `configuration.yaml` sotto `lovelace: dashboards:` (`mode: yaml`).
 4. **Verificare la configurazione** (Strumenti per sviluppatori → Controlla configurazione).
 5. Ricaricare quello che basta: `input_boolean`, `input_select`, `input_number`, `script`, `template`,
-   `automation`, `mqtt` si ricaricano senza riavvio. Serve un riavvio di HA per aggiungere una dashboard in
+   `automation`, `mqtt` si ricaricano senza riavvio. Anche i sensori `history_stats` e `statistics` (piattaforme
+   in YAML, usati dal pacchetto `_metriche`) hanno il loro `reload`: **non serve riavviare HA**, e conviene non
+   farlo con un collaudo in corso (vedi sotto). Ordine usato il 2026-09-20: `input_number.reload`,
+   `history_stats.reload`, `statistics.reload`, `template.reload`.
+   Consigliato escludere dal recorder `sensor.f1_v6_oscillazioni`, `sensor.f1_v6_inversioni` e
+   `sensor.f1_v6_esperimento`: i loro attributi cambiano a ogni misura e non servono nello storico. Serve un riavvio di HA per aggiungere una dashboard in
    `configuration.yaml` o per cambiare le opzioni degli helper definiti lì.
 6. Le dashboard in modalità YAML si aggiornano ricaricando la pagina del browser.
+
+**Con un collaudo in corso** (verificato il 2026-09-20 sul motore `collaudo_motore.py`):
+- **Non riavviare HA.** Se un'eccezione coglie il motore durante il buco, `tick()` chiude il test corrente come
+  «fallito: errore interno del collaudo». Le ricariche non interrompono la connessione di AppDaemon.
+- Il motore legge solo entità già esistenti (`E` in `collaudo_motore.py`): un pacchetto nuovo che non le
+  modifica non lo tocca. `template.reload` rigenera anche `binary_sensor.f1_v6_dati_in_arrivo`, che il motore
+  conta come «tempo senza dati» (criterio non critico, ≤ 5 min): lo sfarfallio dura meno di un secondo.
+- Prima di `input_number.reload` controllare che gli helper con `initial` abbiano ancora il valore iniziale
+  (soglia e minuti dell'allarme, temperatura costante…): la ricarica altrimenti li riporta al valore iniziale.
+- I sensori trigger-based (`riavvii_spontanei`, `scostamento_precedente`) mantengono stato e attributi dopo
+  `template.reload`; verificato confrontando le entità prima e dopo.
 
 **Helper di controllo in `configuration.yaml`** (modificati il 2026-09-18): Kp 0-100 (passo 0,1), Ki 0-0,1
 (passo 0,0001), Kd 0-20000 (passo 1), isteresi 0,1-3,0 °C. Senza `initial`: prima tornavano ai valori di

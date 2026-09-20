@@ -1,5 +1,18 @@
 # Changelog - Fermentatore V6
 
+## [Solo Home Assistant] - 2026-09-20
+### Metriche dell'algoritmo per la didattica (nessuna modifica al firmware)
+- Nuovo pacchetto `hass_spec/packages/fermentatore_v6_f1_metriche.yaml` (e copia F2 generata): periodo e
+  ampiezza dell'oscillazione della temperatura, accensioni all'ora, tempo medio acceso e duty misurato per
+  relè, inversioni caldo↔freddo, scarto medio con segno, su finestra scorrevole di 2 h. In P/PI/PID le
+  accensioni sono al massimo 6/h per relè (finestra di 600 s): la dashboard lo spiega e lo mostra.
+- Esperimento a gradino esteso (errore a regime con segno, accensioni e duty per relè, oscillazione) e nuova
+  **pagella degli algoritmi** che confronta le prove colonna per colonna. Dashboard `f1_v6_laboratorio_dashboard.yaml`
+  con le nuove card nelle viste Laboratorio ed Esperimenti.
+- Provato offline (template Jinja su una simulazione a 20 L) e installato nel Lab il 2026-09-20 durante il
+  collaudo, **senza riavviare HA** (`input_number`, `history_stats`, `statistics` e `template` si ricaricano
+  da soli). Dettagli, limiti e precauzioni con un collaudo in corso: `docs/05_HOME_ASSISTANT_F1.md §5 e §7`.
+
 ## [v6.4.1] - 2026-09-20
 ### Diagnostica del sensore
 - **Contatori delle letture del DS18B20**, nuovo oggetto `sensore_diag` in `esp/state`. Il firmware scarta

@@ -459,6 +459,90 @@ views:
             color: "#f9a825"
             stroke_width: 2
 
+      # ── METRICHE DELL'ALGORITMO (finestra scorrevole di 2 ore) ───────────
+      - type: markdown
+        title: Metriche dell'algoritmo — ultime 2 ore
+        content: |
+          {% macro v(e, u='') %}{{ (states(e) ~ (' ' ~ u if u else '')) if has_value(e) else '—' }}{% endmacro %}
+          {% set m = states('sensor.f1_v6_modo_controllo_attivo') %}
+          {% set st = states('sensor.f1_v6_oscillazioni') %}
+          {% set soglia = states('input_number.f1_v6_lab_soglia_osc') %}
+          **Oscillazione della temperatura:**
+          {% if st == 'oscilla' %}periodo **{{ v('sensor.f1_v6_periodo_oscillazione', 'min') }}**, ampiezza picco-picco
+          **{{ v('sensor.f1_v6_ampiezza_oscillazione', '°C') }}**, {{ v('sensor.f1_v6_oscillazioni_ora', 'osc/h') }}.
+          {%- elif st == 'nessuna oscillazione' %}nessuna oscillazione oltre {{ soglia }} °C: la temperatura è stabile.
+          {%- elif st == 'fermo' %}controllore fermo.
+          {%- else %}misura in corso: servono almeno un'oscillazione completa e 4 ore di osservazione.{% endif %}
+
+          | | Caldo | Freddo |
+          |---|---|---|
+          | Accensioni all'ora | {{ v('sensor.f1_v6_accensioni_ora_riscaldatore', 'acc/h') }} | {{ v('sensor.f1_v6_accensioni_ora_refrigeratore', 'acc/h') }} |
+          | Durata media di un'accensione | {{ v('sensor.f1_v6_tempo_medio_acceso_riscaldatore', 'min') }} | {{ v('sensor.f1_v6_tempo_medio_acceso_refrigeratore', 'min') }} |
+          | Duty misurato | {{ v('sensor.f1_v6_duty_misurato_riscaldatore', '%') }} | {{ v('sensor.f1_v6_duty_misurato_refrigeratore', '%') }} |
+
+          Scarto medio con segno SP−T: **{{ v('sensor.f1_v6_scarto_medio_con_segno', '°C') }}** ·
+          inversioni caldo↔freddo: **{{ v('sensor.f1_v6_inversioni_ora', 'inv/h') }}**
+
+          {% if m in ['on_off', 'on_off_hyst_sym', 'on_off_hyst_asym'] %}**Come leggerle (on/off).** Ogni oscillazione
+          è un'accensione: accensioni all'ora e oscillazioni all'ora coincidono. Il duty cambia a ogni ciclo. Con
+          un'isteresi più larga l'ampiezza cresce e le accensioni calano.
+          {%- elif m in ['P', 'PI', 'PID', 'PD'] %}**Come leggerle ({{ m }}).** Il duty è una finestra di 10 minuti:
+          un relè si accende **al massimo 6 volte all'ora**, qualunque sia la potenza. Il controllore non commuta
+          meno: cambia il *duty*, cioè quanto a lungo resta acceso. Lo scarto medio dice se resta un errore
+          a regime: col P è diverso da zero, con il PI l'integrale lo riporta a zero.
+          {%- else %}Avvia un profilo o un esperimento per vedere le metriche.{% endif %}
+
+          Le statistiche a finestra mescolano il periodo prima e dopo un cambio di algoritmo: dopo una modifica
+          servono fino a 2 ore per assestarsi. Per confronti puliti usa l'esperimento a gradino.
+
+      - type: entities
+        entities:
+          - entity: input_number.f1_v6_lab_soglia_osc
+            name: Soglia di oscillazione (sotto questa escursione non conta)
+
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Ritmo dei relè e ampiezza dell'oscillazione — 12 ore
+          show_states: true
+          colorize_states: true
+        graph_span: 12h
+        update_interval: 1min
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 260
+          legend:
+            show: true
+        yaxis:
+          - id: acc
+            min: 0
+            decimals: 1
+          - id: amp
+            opposite: true
+            min: 0
+            decimals: 2
+        series:
+          - entity: sensor.f1_v6_accensioni_ora_riscaldatore
+            name: Accensioni/h caldo
+            yaxis_id: acc
+            curve: stepline
+            color: "#fb8c00"
+            stroke_width: 2
+          - entity: sensor.f1_v6_accensioni_ora_refrigeratore
+            name: Accensioni/h freddo
+            yaxis_id: acc
+            curve: stepline
+            color: "#29b6f6"
+            stroke_width: 2
+          - entity: sensor.f1_v6_ampiezza_oscillazione
+            name: Ampiezza (°C)
+            yaxis_id: amp
+            color: "#e53935"
+            stroke_width: 2
+            stroke_dash: 4
+
       # ── PARAMETRI: DIDATTICA (modificabili) ──────────────────────────────
       - type: conditional
         conditions:
@@ -593,7 +677,10 @@ views:
           | Sovraelongazione | di quanto la temperatura supera il nuovo setpoint |
           | Assestamento | tempo per entrare in ±0,2 °C e restarci 30 minuti |
           | Errore medio | media di \|T − SP\| dall'inizio: sintetizza precisione e rapidità |
-          | Commutazioni | accensioni dei relè: usura di relè e pompa |
+          | Errore a regime | SP − T con segno, media mobile su 60 minuti: il P puro lascia un valore ≠ 0, il PI lo annulla. Con l'on/off dipende dal punto del ciclo |
+          | Commutazioni | fronti dei relè (accensione e spegnimento): usura di relè e pompa |
+          | Accensioni e duty | accensioni all'ora e quota di tempo acceso, per relè. In P/PI/PID le accensioni sono al massimo 6 all'ora: cambia il duty |
+          | Oscillazione | periodo e ampiezza picco-picco dei massimi e minimi della temperatura |
 
           **Percorso suggerito** (risultati attesi dalla simulazione su 20 L):
 
@@ -603,6 +690,9 @@ views:
           4. *PI consigliato*: l'integrale annulla l'errore a regime.
           5. *PI mal tarato*: oscillazioni lente di circa ±1 °C.
           6. *PID*: quasi uguale al PI: con 20 L d'acqua la derivata serve poco.
+
+          Ogni prova conclusa aggiunge una riga alla **Pagella** qui sotto: confronta gli algoritmi colonna per
+          colonna. Nessun algoritmo vince su tutte: la stella ★ marca il migliore di ogni colonna.
 
       - type: custom:state-switch
         entity: input_select.f1_v6_modalita
@@ -672,8 +762,47 @@ views:
           | Sovraelongazione | {{ d.sovraelongazione }} °C |
           | Assestamento (±0,2 °C per 30 min) | {{ ((d.assestamento_min / 60) | round(1) ~ ' h') if d.assestamento_min is number else ('in banda da ' ~ (((d.ultimo_ts - d.in_banda_da) / 60) | round(0)) ~ ' min' if d.in_banda_da is number else 'non ancora') }} |
           | Errore medio \|T−SP\| | {{ d.errore_medio if d.errore_medio is number else '—' }} °C |
+          | Errore a regime SP−T (media 60 min) | {{ d.errore_regime if d.get('errore_regime') is number else '—' }} °C |
           | Commutazioni relè | {{ d.commutazioni }} |
+          {%- set h = (d.get('minuti') | float(0)) / 60 %}
+          | Accensioni caldo / freddo | {{ d.get('acc_risc', 0) }} / {{ d.get('acc_frigo', 0) }}{% if h >= 0.1 %} ({{ ((d.get('acc_risc', 0)) / h) | round(1) }} / {{ ((d.get('acc_frigo', 0)) / h) | round(1) }} all'ora){% endif %} |
+          | Duty misurato caldo / freddo | {% if h >= 0.1 %}{{ ((d.get('s_risc', 0)) / (h * 36)) | round(1) }} % / {{ ((d.get('s_frigo', 0)) / (h * 36)) | round(1) }} %{% else %}—{% endif %} |
+          | Oscillazione | {% if d.get('osc_stato') == 'oscilla' %}periodo {{ d.osc_periodo }} min, ampiezza {{ d.osc_ampiezza }} °C{% elif d.get('osc_stato') == 'nessuna oscillazione' %}nessuna{% else %}in misura{% endif %} |
           | Controllo | {{ d.modo }} · lato {{ d.get('lato', '') }} · Kp {{ d.kp }} · Ki {{ d.ki }} · Kd {{ d.kd }} · isteresi {{ d.isteresi }} °C |
+          {% endif %}
+
+      - type: markdown
+        title: Pagella degli algoritmi
+        content: |
+          {% set r = state_attr('sensor.f1_v6_pagella', 'righe') %}
+          {% if r is not sequence or r is string or (r | length) == 0 %}
+          Nessuna prova registrata. Al termine di un esperimento (*Termina esperimento*) la riga compare qui:
+          prova più algoritmi con lo stesso gradino e confrontali. Le righe restano finché Home Assistant non
+          si riavvia; il registro qui sotto conserva tutti i risultati.
+          {% else %}
+          {% set ns = namespace(so=1000, er=1000, ac=1000, am=1000, sa=100000) %}
+          {% for x in r %}
+            {% set ac = (x.acc_ora_risc + x.acc_ora_frigo) if (x.acc_ora_risc is number and x.acc_ora_frigo is number) else none %}
+            {% set am = 0 if x.osc_stato == 'nessuna oscillazione' else x.osc_ampiezza %}
+            {% if x.sovra is number and x.sovra < ns.so %}{% set ns.so = x.sovra %}{% endif %}
+            {% if x.errore_regime is number and x.osc_stato != 'oscilla' and (x.errore_regime | abs) < ns.er %}{% set ns.er = x.errore_regime | abs %}{% endif %}
+            {% if ac is number and ac < ns.ac %}{% set ns.ac = ac %}{% endif %}
+            {% if am is number and am < ns.am %}{% set ns.am = am %}{% endif %}
+            {% if x.assest_min is number and x.assest_min < ns.sa %}{% set ns.sa = x.assest_min %}{% endif %}
+          {% endfor %}
+          {% set stelle = (r | length) > 1 %}
+          | Algoritmo | Gradino | Sovraelong. | Assestamento | Errore a regime | Accensioni/h | Duty caldo / freddo | Oscillazione |
+          |---|---|---|---|---|---|---|---|
+          {% for x in r -%}
+          {%- set ac = (x.acc_ora_risc + x.acc_ora_frigo) if (x.acc_ora_risc is number and x.acc_ora_frigo is number) else none -%}
+          {%- set am = 0 if x.osc_stato == 'nessuna oscillazione' else x.osc_ampiezza -%}
+          | {{ x.etichetta }} | {{ x.gradino }} °C | {{ x.sovra }} °C{{ ' ★' if stelle and x.sovra is number and x.sovra == ns.so else '' }} | {{ ((x.assest_min / 60) | round(1) ~ ' h') if x.assest_min is number else 'no' }}{{ ' ★' if stelle and x.assest_min is number and x.assest_min == ns.sa else '' }} | {{ x.errore_regime if x.errore_regime is number else '—' }} °C{{ ' ★' if stelle and x.errore_regime is number and x.osc_stato != 'oscilla' and (x.errore_regime | abs) == ns.er else '' }} | {{ ac | round(1) if ac is number else '—' }}{{ ' ★' if stelle and ac is number and ac == ns.ac else '' }} | {{ x.duty_risc if x.duty_risc is number else '—' }} % / {{ x.duty_frigo if x.duty_frigo is number else '—' }} % | {% if x.osc_stato == 'oscilla' %}{{ x.osc_periodo }} min · {{ x.osc_ampiezza }} °C{% elif x.osc_stato == 'nessuna oscillazione' %}nessuna{% else %}n/d{% endif %}{{ ' ★' if stelle and am is number and am == ns.am else '' }} |
+          {% endfor %}
+          Ogni riga è l'ultima prova di quella configurazione con quel gradino (fino a 10 righe). ★ = migliore della
+          colonna (meno sovraelongazione, assestamento più rapido, errore a regime più vicino a zero, meno accensioni,
+          oscillazione più piccola). L'errore a regime è confrontabile solo per gli algoritmi che non oscillano
+          (P, PI, PID): con l'on/off dipende dal punto del ciclo, e quelle righe non ricevono la stella.
+          Le colonne non si possono ottimizzare tutte insieme: è il compromesso del controllo.
           {% endif %}
 
       - type: custom:apexcharts-card

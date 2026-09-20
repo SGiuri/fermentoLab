@@ -1,6 +1,6 @@
 # =============================================================================
 # Pacchetto Home Assistant — Fermentatore V6 F2 — LABORATORIO (didattica)
-# Richiede firmware >= 6.3.0 e i pacchetti fermentatore_v6_f2_allarmi / _entita.
+# Richiede firmware >= 6.3.0 e i pacchetti fermentatore_v6_f2_allarmi / _entita / _metriche.
 #
 # - Modalità Produzione / Didattica / Collaudo: gli script che modificano il controllo o avviano
 #   esperimenti partono solo in Didattica (blocco lato Home Assistant). Collaudo: pacchetto _collaudo.
@@ -8,7 +8,9 @@
 # - "Applica al fermentatore": stesso modo = parametri aggiornati al volo; modo diverso con
 #   controllo in marcia = stop -> control_set -> start.
 # - Esperimento a gradino di setpoint con metriche: sovraelongazione, tempo di assestamento
-#   (entro ±0,2 °C per 30 min), errore medio assoluto, commutazioni dei relè.
+#   (entro ±0,2 °C per 30 min), errore medio assoluto, errore a regime con segno (media mobile 60 min), commutazioni,
+#   accensioni e duty misurato per relè, periodo e ampiezza dell'oscillazione (dal pacchetto _metriche).
+# - Pagella degli algoritmi: una riga per configurazione provata, per confrontare on/off, P, PI, PID.
 # - I limiti di sicurezza del firmware restano sempre attivi, in entrambe le modalità.
 #
 # FILE GENERATO da genera_f2.py a partire da fermentatore_v6_f2_laboratorio.yaml: non modificare a mano.
@@ -111,6 +113,11 @@ template:
       - trigger: state
         entity_id: sensor.f2_v6_temperatura
         id: misura
+      - trigger: state
+        entity_id:
+          - binary_sensor.f2_v6_riscaldatore
+          - binary_sensor.f2_v6_refrigeratore
+        id: rele
       - trigger: time_pattern
         minutes: "/1"
         id: tempo
@@ -136,6 +143,8 @@ template:
             {% set T = states('sensor.f2_v6_temperatura') | float(none) %}
             {% set ts = now().timestamp() | round(0) %}
             {% set comm_ora = states('sensor.f2_v6_commutazioni_rele') | int(0) %}
+            {% set RISC = 'binary_sensor.f2_v6_riscaldatore' %}
+            {% set FRIGO = 'binary_sensor.f2_v6_refrigeratore' %}
             {% if avvio %}
             {% set lato = 'caldo' if (trigger.event.data.get('sp_finale') | float(0)) >= (trigger.event.data.get('sp_iniziale') | float(0)) else 'freddo' %}
             {{ {'attivo': true,
@@ -147,6 +156,8 @@ template:
                 'ultimo_ts': ts, 'somma_errore': 0, 'minuti': 0, 'errore_medio': none,
                 'in_banda_da': none, 'assestamento_min': none, 'sovraelongazione': 0,
                 'comm_inizio': comm_ora, 'commutazioni': 0,
+                'acc_risc': 0, 'acc_frigo': 0, 's_risc': 0, 's_frigo': 0,
+                'errore_regime': none, 'osc_stato': none, 'osc_periodo': none, 'osc_ampiezza': none,
                 'modo': states('sensor.f2_v6_modo_controllo_attivo'),
                 'lato': lato,
                 'kp': states('sensor.f2_v6_kp_' ~ lato ~ '_attivo') | float(none),
@@ -164,18 +175,80 @@ template:
             {% set assest = ((banda_da - a.inizio_ts) / 60) if (banda_da is number and ts - banda_da >= 1800) else none %}
             {% set salita = a.sp_finale >= a.sp_iniziale %}
             {% set sovra = ([0, tmax - a.sp_finale] | max) if salita else ([0, a.sp_finale - tmin] | max) %}
+            {# Relè: accensioni (fronti off→on) e secondi accesi. Nell'intervallo dall'ultimo aggiornamento lo
+               stato del relè è quello di prima del fronte se il fronte è proprio questo trigger. Un intervallo
+               oltre 120 s (buco di dati, riavvio di HA) non si integra. #}
+            {% set fronte = trigger.id == 'rele' and trigger.from_state is not none and trigger.to_state is not none %}
+            {% set dt_s = [[ts - a.ultimo_ts, 0] | max, 120] | min if a.get('ultimo_ts') is number else 0 %}
+            {% set r_on = (trigger.from_state.state if (fronte and trigger.entity_id == RISC) else states(RISC)) == 'on' %}
+            {% set f_on = (trigger.from_state.state if (fronte and trigger.entity_id == FRIGO) else states(FRIGO)) == 'on' %}
+            {% set nuovo_r = 1 if (fronte and trigger.entity_id == RISC and trigger.from_state.state == 'off' and trigger.to_state.state == 'on') else 0 %}
+            {% set nuovo_f = 1 if (fronte and trigger.entity_id == FRIGO and trigger.from_state.state == 'off' and trigger.to_state.state == 'on') else 0 %}
+            {# Errore a regime con segno SP−T: media mobile esponenziale con costante di 60 minuti.
+               Ha senso per P/PI/PID; con l'on/off dipende dal punto del ciclo in cui ci si ferma. #}
+            {% set e_s = a.sp_finale - T %}
+            {% set alfa = dt_min / (60 + dt_min) %}
+            {% set ema = e_s if a.get('errore_regime') is not number else (a.errore_regime + (e_s - a.errore_regime) * alfa) %}
             {{ dict(a, t_max=tmax, t_min=tmin, ultimo_ts=ts,
                     somma_errore=somma | round(3), minuti=minuti | round(1),
                     errore_medio=((somma / minuti) | round(3)) if minuti > 0 else none,
                     in_banda_da=banda_da,
                     assestamento_min=(assest | round(0)) if assest is number else none,
                     sovraelongazione=sovra | round(2),
-                    commutazioni=[0, comm_ora - (a.comm_inizio | int(0))] | max) }}
+                    commutazioni=[0, comm_ora - (a.comm_inizio | int(0))] | max,
+                    acc_risc=(a.get('acc_risc') | int(0)) + nuovo_r, acc_frigo=(a.get('acc_frigo') | int(0)) + nuovo_f,
+                    s_risc=((a.get('s_risc') | float(0)) + (dt_s if r_on else 0)) | round(0),
+                    s_frigo=((a.get('s_frigo') | float(0)) + (dt_s if f_on else 0)) | round(0),
+                    errore_regime=ema | round(3),
+                    osc_stato=states('sensor.f2_v6_oscillazioni'),
+                    osc_periodo=states('sensor.f2_v6_periodo_oscillazione') | float(none),
+                    osc_ampiezza=states('sensor.f2_v6_ampiezza_oscillazione') | float(none)) }}
             {% elif fine and a.get('attivo') %}
             {{ dict(a, attivo=false, fine_ts=ts) }}
             {% else %}
             {{ a }}
             {% endif %}
+
+  # Pagella degli algoritmi: al termine di ogni esperimento salva una riga con le sue metriche. Una riga
+  # per configurazione (algoritmo, parametri e gradino): rifare la stessa prova sostituisce la riga.
+  # Le ultime 10 righe restano nell'attributo "righe"; il registro del laboratorio conserva tutto.
+  # Le righe stanno in memoria: dopo un riavvio di Home Assistant possono ripartire vuote.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.f2_v6_esperimento
+        to: "concluso"
+    sensor:
+      - name: "F2 V6 Pagella"
+        unique_id: f2_v6_lab_pagella
+        icon: mdi:clipboard-list-outline
+        state: "{{ now().strftime('%d/%m %H:%M') }}"
+        attributes:
+          righe: >-
+            {% set d = trigger.to_state.attributes.get('dati') %}
+            {% set vecchie = this.attributes.get('righe') if this is defined and this.attributes is defined else none %}
+            {% set vecchie = vecchie if (vecchie is sequence and vecchie is not string) else [] %}
+            {% set ns = namespace(righe=vecchie) %}
+            {% if d is mapping and d.get('inizio_ts') is number %}
+              {% set m = d.get('modo') %}
+              {% set etichetta = 'On/Off puro' if m == 'on_off' else (
+                   ('On/Off, isteresi ' ~ d.get('isteresi') ~ ' °C') if m in ['on_off_hyst_sym', 'on_off_hyst_asym'] else
+                   (m ~ ', Kp ' ~ d.get('kp') ~ ((', Ki ' ~ d.get('ki')) if m in ['PI', 'PID'] else '')
+                      ~ ((', Kd ' ~ d.get('kd')) if m in ['PD', 'PID'] else ''))) %}
+              {% set h = (d.get('minuti') | float(0)) / 60 %}
+              {% set gradino = ((d.get('sp_finale') | float(0)) - (d.get('sp_iniziale') | float(0))) | round(1) %}
+              {% set nuova = {'chiave': etichetta ~ ' | gradino ' ~ gradino,
+                              'etichetta': etichetta, 'gradino': gradino, 'fine_ts': d.get('fine_ts'), 'durata_h': h | round(1),
+                              'sovra': d.get('sovraelongazione'), 'assest_min': d.get('assestamento_min'),
+                              'errore_medio': d.get('errore_medio'), 'errore_regime': d.get('errore_regime'),
+                              'acc_ora_risc': ((d.get('acc_risc') | float(0)) / h) | round(1) if h >= 0.1 else none,
+                              'acc_ora_frigo': ((d.get('acc_frigo') | float(0)) / h) | round(1) if h >= 0.1 else none,
+                              'duty_risc': ((d.get('s_risc') | float(0)) / (h * 36)) | round(1) if h >= 0.1 else none,
+                              'duty_frigo': ((d.get('s_frigo') | float(0)) / (h * 36)) | round(1) if h >= 0.1 else none,
+                              'osc_stato': d.get('osc_stato'), 'osc_periodo': d.get('osc_periodo'),
+                              'osc_ampiezza': d.get('osc_ampiezza')} %}
+              {% set ns.righe = ([nuova] + (vecchie | rejectattr('chiave', 'eq', nuova.chiave) | list))[:10] %}
+            {% endif %}
+            {{ ns.righe }}
 
 script:
   f2_v6_lab_carica_preset:

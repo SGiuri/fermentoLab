@@ -1,0 +1,301 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F1 — METRICHE DELL'ALGORITMO (didattica)
+# Richiede i pacchetti fermentatore_v6_f1_entita (relè, temperatura, setpoint, errore, modo attivo).
+# Nessuna modifica al firmware: tutto è calcolato in Home Assistant.
+#
+# Tre cose diverse, da tenere separate (vedi docs/05_HOME_ASSISTANT_F1.md):
+#   1. OSCILLAZIONE della temperatura: periodo e ampiezza dei picchi attorno al setpoint.
+#   2. ACCENSIONI dei relè: quante volte scattano. In P/PI/PID sono al massimo 6/h per relè
+#      (finestra time-proportional di 600 s): il PID non commuta meno, cambia il duty.
+#   3. DUTY misurato: la quota di tempo in cui il relè è davvero acceso.
+# In più: scarto medio con segno (rivela l'errore a regime del P) e inversioni caldo↔freddo.
+#
+# Finestra di calcolo: 2 ore scorrevoli, fissa (history_stats accetta solo durate costanti).
+# Dopo un cambio di algoritmo le metriche a finestra impiegano fino a 2 h ad assestarsi:
+# per confronti puliti si usa l'esperimento a gradino, che misura dall'avvio (vista Esperimenti).
+#
+# Consigliato: escludere dal recorder sensor.f1_v6_oscillazioni e sensor.f1_v6_inversioni (gli
+# attributi cambiano a ogni misura e non servono nello storico; i sensori derivati sì).
+#
+# Generato da genera_f2.py: modificare questo file e rigenerare la versione F2.
+# =============================================================================
+
+input_number:
+  f1_v6_lab_soglia_osc:
+    name: "F1 V6 Soglia Oscillazione"
+    min: 0.05
+    max: 0.5
+    step: 0.05
+    initial: 0.15
+    unit_of_measurement: "°C"
+    icon: mdi:sine-wave
+
+sensor:
+  # --- Relè: accensioni e tempo acceso nelle ultime 2 h (sliding window dallo storico) ---
+  - platform: history_stats
+    name: "F1 V6 Met Risc Count 2h"
+    unique_id: f1_v6_met_risc_count_2h
+    entity_id: binary_sensor.f1_v6_riscaldatore
+    state: "on"
+    type: count
+    end: "{{ now() }}"
+    duration:
+      hours: 2
+  - platform: history_stats
+    name: "F1 V6 Met Frigo Count 2h"
+    unique_id: f1_v6_met_frigo_count_2h
+    entity_id: binary_sensor.f1_v6_refrigeratore
+    state: "on"
+    type: count
+    end: "{{ now() }}"
+    duration:
+      hours: 2
+  - platform: history_stats
+    name: "F1 V6 Met Risc Time 2h"
+    unique_id: f1_v6_met_risc_time_2h
+    entity_id: binary_sensor.f1_v6_riscaldatore
+    state: "on"
+    type: time
+    end: "{{ now() }}"
+    duration:
+      hours: 2
+  - platform: history_stats
+    name: "F1 V6 Met Frigo Time 2h"
+    unique_id: f1_v6_met_frigo_time_2h
+    entity_id: binary_sensor.f1_v6_refrigeratore
+    state: "on"
+    type: time
+    end: "{{ now() }}"
+    duration:
+      hours: 2
+
+  # --- Scarto medio con segno SP−T (stesso segno di "Errore SP−T"): >0 = T sotto il setpoint ---
+  - platform: statistics
+    name: "F1 V6 Met Errore Medio 2h"
+    unique_id: f1_v6_met_errore_medio_2h
+    entity_id: sensor.f1_v6_errore
+    state_characteristic: mean
+    max_age:
+      hours: 2
+    sampling_size: 600
+
+template:
+  # ── Valori pronti per la dashboard, derivati dalle statistiche a finestra ───────────────────────
+  - sensor:
+      - name: "F1 V6 Accensioni Ora Riscaldatore"
+        unique_id: f1_v6_met_acc_ora_risc
+        unit_of_measurement: "acc/h"
+        state_class: measurement
+        icon: mdi:radiator
+        availability: "{{ has_value('sensor.f1_v6_met_risc_count_2h') }}"
+        state: "{{ (states('sensor.f1_v6_met_risc_count_2h') | float(0) / 2) | round(1) }}"
+      - name: "F1 V6 Accensioni Ora Refrigeratore"
+        unique_id: f1_v6_met_acc_ora_frigo
+        unit_of_measurement: "acc/h"
+        state_class: measurement
+        icon: mdi:snowflake
+        availability: "{{ has_value('sensor.f1_v6_met_frigo_count_2h') }}"
+        state: "{{ (states('sensor.f1_v6_met_frigo_count_2h') | float(0) / 2) | round(1) }}"
+
+      # Duty misurato = tempo acceso / tempo della finestra. Diverso dal "Duty Riscaldatore" istantaneo
+      # (quello che il controllore chiede in questo momento).
+      - name: "F1 V6 Duty Misurato Riscaldatore"
+        unique_id: f1_v6_met_duty_risc
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:radiator
+        availability: "{{ has_value('sensor.f1_v6_met_risc_time_2h') }}"
+        state: "{{ (states('sensor.f1_v6_met_risc_time_2h') | float(0) / 2 * 100) | round(1) }}"
+      - name: "F1 V6 Duty Misurato Refrigeratore"
+        unique_id: f1_v6_met_duty_frigo
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:snowflake
+        availability: "{{ has_value('sensor.f1_v6_met_frigo_time_2h') }}"
+        state: "{{ (states('sensor.f1_v6_met_frigo_time_2h') | float(0) / 2 * 100) | round(1) }}"
+
+      # Durata media di un'accensione (min). Senza accensioni nella finestra non è definita.
+      - name: "F1 V6 Tempo Medio Acceso Riscaldatore"
+        unique_id: f1_v6_met_on_medio_risc
+        unit_of_measurement: "min"
+        state_class: measurement
+        icon: mdi:timer-outline
+        availability: >-
+          {{ has_value('sensor.f1_v6_met_risc_time_2h') and (states('sensor.f1_v6_met_risc_count_2h') | float(0)) > 0 }}
+        state: >-
+          {{ (states('sensor.f1_v6_met_risc_time_2h') | float(0) * 60 / (states('sensor.f1_v6_met_risc_count_2h') | float(1))) | round(1) }}
+      - name: "F1 V6 Tempo Medio Acceso Refrigeratore"
+        unique_id: f1_v6_met_on_medio_frigo
+        unit_of_measurement: "min"
+        state_class: measurement
+        icon: mdi:timer-outline
+        availability: >-
+          {{ has_value('sensor.f1_v6_met_frigo_time_2h') and (states('sensor.f1_v6_met_frigo_count_2h') | float(0)) > 0 }}
+        state: >-
+          {{ (states('sensor.f1_v6_met_frigo_time_2h') | float(0) * 60 / (states('sensor.f1_v6_met_frigo_count_2h') | float(1))) | round(1) }}
+
+      - name: "F1 V6 Scarto Medio Con Segno"
+        unique_id: f1_v6_met_scarto_medio
+        unit_of_measurement: "°C"
+        state_class: measurement
+        icon: mdi:delta
+        availability: "{{ has_value('sensor.f1_v6_met_errore_medio_2h') }}"
+        state: "{{ states('sensor.f1_v6_met_errore_medio_2h') | float(0) | round(3) }}"
+
+  # ── Rilevatore di oscillazioni ──────────────────────────────────────────────────────────────────
+  # Cerca massimi e minimi della temperatura con un filtro a zig-zag: un picco è registrato quando
+  # T scende di almeno la soglia (input_number.f1_v6_lab_soglia_osc) sotto il massimo raggiunto, una
+  # valle quando risale. Indipendente da setpoint e algoritmo. Si azzera se cambiano il setpoint
+  # (>0,05 °C), l'algoritmo o i suoi parametri, se il controllo non è in marcia, se mancano dati per
+  # più di 10 minuti. Periodo = media degli intervalli picco→picco e valle→valle; ampiezza = media delle
+  # escursioni picco-valle. Serve almeno 1 oscillazione (3 estremi); l'attributo dati.stat ha i valori.
+  # Stati: fermo · in misura (meno di 4 h di osservazione, o estremi ancora troppo pochi) · oscilla ·
+  # nessuna oscillazione (oltre 4 h senza estremi recenti). Periodi oltre ~6 h non sono distinguibili
+  # da una deriva lenta.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.f1_v6_temperatura
+        id: misura
+      - trigger: time_pattern
+        minutes: "/1"
+        id: tempo
+    sensor:
+      - name: "F1 V6 Oscillazioni"
+        unique_id: f1_v6_met_oscillazioni
+        icon: mdi:sine-wave
+        state: >-
+          {% set a = this.attributes.get('dati') if this is defined and this.attributes is defined else none %}
+          {% set a = a if a is mapping else {} %}
+          {{ (a.get('stat') or {}).get('stato', 'in misura') }}
+        attributes:
+          dati: >-
+            {% set a = this.attributes.get('dati') if this is defined and this.attributes is defined else none %}
+            {% set a = a if a is mapping else {} %}
+            {% set T = states('sensor.f1_v6_temperatura') | float(none) %}
+            {% set sp = states('sensor.f1_v6_setpoint') | float(none) %}
+            {% set attivo = is_state('binary_sensor.f1_v6_controllo_attivo', 'on') %}
+            {% set soglia = states('input_number.f1_v6_lab_soglia_osc') | float(0.15) %}
+            {% set ts = now().timestamp() | round(0) %}
+            {% set chiave = [states('sensor.f1_v6_modo_controllo_attivo'), states('sensor.f1_v6_kp_caldo_attivo'),
+                             states('sensor.f1_v6_ki_caldo_attivo'), states('sensor.f1_v6_kd_caldo_attivo'),
+                             states('sensor.f1_v6_kp_freddo_attivo'), states('sensor.f1_v6_ki_freddo_attivo'),
+                             states('sensor.f1_v6_kd_freddo_attivo'), states('sensor.f1_v6_isteresi_attiva')] | join('|') %}
+            {% set utilizzabile = attivo and T is not none and sp is not none %}
+            {% set ripartire = (not utilizzabile) or a.get('ts') is not number or (ts - a.ts) > 600
+                               or a.get('chiave') != chiave or a.get('sp') is not number or ((sp - a.sp) | abs) > 0.05 %}
+            {% set ns = namespace(ok=false, dir=0, et=0, ets=0, inizio=ts, est=[]) %}
+            {% if utilizzabile and ripartire %}
+              {% set ns.ok = true %}
+              {% set ns.et = T %}
+              {% set ns.ets = ts %}
+            {% elif utilizzabile %}
+              {% set ns.ok = true %}
+              {% set ns.dir = a.get('dir') | int(0) %}
+              {% set ns.et = a.get('et') | float(T) %}
+              {% set ns.ets = a.get('ets') | float(ts) %}
+              {% set ns.inizio = a.get('inizio') | float(ts) %}
+              {% set ns.est = a.get('estremi', []) | selectattr('t', 'ge', ts - 21600) | list %}
+              {% if ns.dir == 0 %}
+                {% if T >= ns.et + soglia %}{% set ns.dir = 1 %}{% set ns.et = T %}{% set ns.ets = ts %}
+                {% elif T <= ns.et - soglia %}{% set ns.dir = -1 %}{% set ns.et = T %}{% set ns.ets = ts %}{% endif %}
+              {% elif ns.dir == 1 %}
+                {% if T > ns.et %}{% set ns.et = T %}{% set ns.ets = ts %}
+                {% elif ns.et - T >= soglia %}
+                  {% set ns.est = ns.est + [{'t': ns.ets, 'k': 1, 'v': ns.et}] %}
+                  {% set ns.dir = -1 %}{% set ns.et = T %}{% set ns.ets = ts %}
+                {% endif %}
+              {% else %}
+                {% if T < ns.et %}{% set ns.et = T %}{% set ns.ets = ts %}
+                {% elif T - ns.et >= soglia %}
+                  {% set ns.est = ns.est + [{'t': ns.ets, 'k': -1, 'v': ns.et}] %}
+                  {% set ns.dir = 1 %}{% set ns.et = T %}{% set ns.ets = ts %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+            {% set est = ns.est[-8:] %}
+            {% set n = est | length %}
+            {% set sm = namespace(somma=0, per=0) %}
+            {% for e in est %}
+              {% if not loop.first %}{% set sm.somma = sm.somma + ((e.v - est[loop.index0 - 1].v) | abs) %}{% endif %}
+              {% if loop.index0 >= 2 %}{% set sm.per = sm.per + (e.t - est[loop.index0 - 2].t) %}{% endif %}
+            {% endfor %}
+            {% set periodo = (sm.per / (n - 2) / 60) if n >= 3 else none %}
+            {% set ampiezza = (sm.somma / (n - 1)) if n >= 2 else none %}
+            {% set eta_ultimo = ((ts - est[-1].t) / 60) if n > 0 else none %}
+            {% set osservato = (ts - ns.inizio) / 60 %}
+            {% if not ns.ok %}{% set stato = 'fermo' %}
+            {% elif n >= 3 and eta_ultimo <= ([60, 1.5 * periodo] | max) %}{% set stato = 'oscilla' %}
+            {% elif osservato < 240 or (n > 0 and eta_ultimo < 180) %}{% set stato = 'in misura' %}
+            {% else %}{% set stato = 'nessuna oscillazione' %}{% endif %}
+            {% if not ns.ok %}
+            {{ {'stat': {'stato': 'fermo'}} }}
+            {% else %}
+            {{ {'dir': ns.dir, 'et': ns.et, 'ets': ns.ets, 'sp': sp, 'ts': ts, 'chiave': chiave,
+                'inizio': ns.inizio, 'estremi': est,
+                'stat': {'stato': stato, 'n': n,
+                         'periodo_min': (periodo | round(1)) if stato == 'oscilla' else none,
+                         'ampiezza': (ampiezza | round(2)) if stato == 'oscilla' else none,
+                         'osc_ora': ((60 / periodo) | round(2)) if stato == 'oscilla' else (0 if stato == 'nessuna oscillazione' else none)}} }}
+            {% endif %}
+
+  - sensor:
+      - name: "F1 V6 Periodo Oscillazione"
+        unique_id: f1_v6_met_periodo_osc
+        unit_of_measurement: "min"
+        state_class: measurement
+        icon: mdi:timer-sand
+        availability: "{{ (state_attr('sensor.f1_v6_oscillazioni', 'dati') or {}).get('stat', {}).get('periodo_min') is number }}"
+        state: "{{ state_attr('sensor.f1_v6_oscillazioni', 'dati').stat.periodo_min }}"
+      - name: "F1 V6 Ampiezza Oscillazione"
+        unique_id: f1_v6_met_ampiezza_osc
+        unit_of_measurement: "°C"
+        state_class: measurement
+        icon: mdi:arrow-expand-vertical
+        availability: "{{ (state_attr('sensor.f1_v6_oscillazioni', 'dati') or {}).get('stat', {}).get('ampiezza') is number }}"
+        state: "{{ state_attr('sensor.f1_v6_oscillazioni', 'dati').stat.ampiezza }}"
+      - name: "F1 V6 Oscillazioni Ora"
+        unique_id: f1_v6_met_osc_ora
+        unit_of_measurement: "osc/h"
+        state_class: measurement
+        icon: mdi:sine-wave
+        availability: "{{ (state_attr('sensor.f1_v6_oscillazioni', 'dati') or {}).get('stat', {}).get('osc_ora') is number }}"
+        state: "{{ state_attr('sensor.f1_v6_oscillazioni', 'dati').stat.osc_ora }}"
+
+  # ── Inversioni di direzione caldo↔freddo ────────────────────────────────────────────────────────
+  # Una inversione è un'accensione di un relè quando l'ultima accensione era dell'altro. Sono energia
+  # sprecata: il firmware impone già 60 s di attesa al cambio di direzione (uscite_rele). Se passa
+  # più di un'ora tra due accensioni la memoria si azzera.
+  - triggers:
+      - trigger: state
+        entity_id:
+          - binary_sensor.f1_v6_riscaldatore
+          - binary_sensor.f1_v6_refrigeratore
+        from: "off"
+        to: "on"
+        id: acceso
+    sensor:
+      - name: "F1 V6 Inversioni"
+        unique_id: f1_v6_met_inversioni
+        icon: mdi:swap-horizontal
+        state: "{{ 'caldo' if trigger.entity_id == 'binary_sensor.f1_v6_riscaldatore' else 'freddo' }}"
+        attributes:
+          dati: >-
+            {% set a = this.attributes.get('dati') if this is defined and this.attributes is defined else none %}
+            {% set a = a if a is mapping else {} %}
+            {% set ts = now().timestamp() | round(0) %}
+            {% set nuovo = 'caldo' if trigger.entity_id == 'binary_sensor.f1_v6_riscaldatore' else 'freddo' %}
+            {% set recente = a.get('ts_ultimo') is number and (ts - a.ts_ultimo) <= 3600 %}
+            {% set inversione = recente and a.get('ultimo') in ['caldo', 'freddo'] and a.get('ultimo') != nuovo %}
+            {% set lista = a.get('inv', []) | select('ge', ts - 7200) | list %}
+            {{ {'ultimo': nuovo, 'ts_ultimo': ts, 'inv': (lista + [ts]) if inversione else lista} }}
+
+  - sensor:
+      - name: "F1 V6 Inversioni Ora"
+        unique_id: f1_v6_met_inversioni_ora
+        unit_of_measurement: "inv/h"
+        state_class: measurement
+        icon: mdi:swap-horizontal
+        state: >-
+          {% set d = state_attr('sensor.f1_v6_inversioni', 'dati') %}
+          {% set lista = (d.get('inv', []) if d is mapping else []) | select('ge', now().timestamp() - 7200) | list %}
+          {{ ((lista | length) / 2) | round(1) }}

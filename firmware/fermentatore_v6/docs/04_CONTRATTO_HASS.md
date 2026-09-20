@@ -38,6 +38,9 @@ F1 con `genera_f2.py`):
 - `fermentatore_v6_f1_laboratorio.yaml` e `fermentatore_v6_f1_collaudo.yaml` (2026-09-18/19, solo F1):
   modalità Didattica/Collaudo, preset, esperimenti, test automatici — vedi
   [05_HOME_ASSISTANT_F1.md](05_HOME_ASSISTANT_F1.md) e [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md).
+- `fermentatore_v6_{id}_metriche.yaml` (2026-09-20): oscillazioni, accensioni e duty dei relè calcolati in
+  HA dalle entità già pubblicate (`temp_reale`, `setpoint`, `riscaldatore`, `refrigeratore`, `errore`,
+  modo e parametri attivi). Nessun campo nuovo nel contratto MQTT né modifiche al firmware.
 
 Richiedono in `configuration.yaml`: `homeassistant: packages: !include_dir_named packages`.
 
