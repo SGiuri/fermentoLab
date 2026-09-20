@@ -301,7 +301,7 @@ NVS, heartbeat…), e i moduli `uscite_rele` e `sensor_watchdog` hanno un solo r
 | `connettivita` | 1 client MQTT, 1 LWT, topic costanti | subscribe a due prefissi comandi, publish parametrico, LWT (sotto), payload glicole | M |
 | `display` | 1 OLED, schermata di un fermentatore | 3 temperature + stato relè; allarme per fermentatore | M |
 | `fermentatore_v6.ino` | ≈ 1100 righe, stato globale di un fermentatore | struct `Fermentatore` istanziata due volte, funzioni con riferimento all'istanza, loop che scorre i canali | **L** |
-| `tests/host` | 22 scenari su istanza singola | ogni scenario su istanza 1 e 2; nuovi: indipendenza dei canali, sfasamento, canale assente, validità glicole | **L** |
+| `tests/host` | 24 scenari su istanza singola | ogni scenario su istanza 1 e 2; nuovi: indipendenza dei canali, sfasamento, canale assente, validità glicole | **L** |
 | `collaudo_motore.py` | `entity_id` di F1 in `E{}` | parametrizzazione per fermentatore (già in [10 §4](10_PUNTI_APERTI.md)) | M |
 
 **Il rischio principale è la regressione sul codice già qualificato su F1.** Contromisura: lasciare

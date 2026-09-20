@@ -204,6 +204,30 @@ void mqtt_pubblica_controllo(const StatoControllo& c) {
   _pubblica(TOPIC_CONTROLLO, payload, true);
 }
 
+void mqtt_pubblica_diag(const DiagReset& r, const DiagLoop& l) {
+  char payload[640];
+  const int n = snprintf(payload, sizeof(payload),
+           "{\"reset\":{\"valido\":%s,\"hw\":%u,\"hw_nome\":\"%s\",\"rtc_azzerato\":%s,"
+           "\"giro_ms\":%ld,\"comm_ms\":%ld,\"comm_rele\":\"%s\",\"comm_stato\":\"%s\","
+           "\"sezione\":\"%s\",\"loop_max_ms\":%lu,\"loop_max_sez\":\"%s\"},"
+           "\"loop\":{\"max_ms\":%lu,\"max_sez\":\"%s\",\"lenti_1s\":%lu,\"lenti_10s\":%lu,\"setup_ms\":%lu},"
+           "\"uptime_s\":%lu,\"firmware\":\"%s\",\"fermenter_id\":\"%s\"}",
+           r.valida ? "true" : "false",
+           (unsigned)r.hw_codice, r.hw_nome ? r.hw_nome : "",
+           r.rtc_azzerato ? "true" : "false",
+           (long)r.giro_ms, (long)r.comm_ms,
+           diag_reset_nome_rele(r.comm_rele),
+           r.comm_rele ? (r.comm_acceso ? "on" : "off") : "",
+           diag_reset_nome_sezione(r.sezione),
+           (unsigned long)r.loop_max_ms, diag_reset_nome_sezione(r.loop_max_sez),
+           (unsigned long)l.max_ms, diag_reset_nome_sezione(l.max_sez),
+           (unsigned long)l.lenti_1s, (unsigned long)l.lenti_10s, (unsigned long)l.setup_ms,
+           (unsigned long)(millis() / 1000UL),
+           FIRMWARE_VERSION, DEVICE_FERMENTER_ID);
+  if (n <= 0 || n >= (int)sizeof(payload)) return;  // mai JSON troncato
+  _pubblica(TOPIC_DIAG, payload, true);
+}
+
 void mqtt_pubblica_ack(const char* request_id,
                        const char* command,
                        const char* status,

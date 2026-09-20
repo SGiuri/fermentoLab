@@ -2,7 +2,7 @@
 #include "secrets.h"
 
 // Pattern required by project policy: 6.MINOR.PATCH
-#define FIRMWARE_VERSION "6.4.1"
+#define FIRMWARE_VERSION "6.4.2"
 
 #define SCHEMA_VERSION "1.0"
 
@@ -90,6 +90,7 @@
 #define TOPIC_ALARM           TOPIC_PREFIX_ESP "/alarm"
 #define TOPIC_AVAILABILITY    TOPIC_PREFIX_ESP "/availability"   // retained: online | offline (LWT)
 #define TOPIC_CONTROLLO       TOPIC_PREFIX_ESP "/controllo"      // retained: grandezze interne del controllore (didattica)
+#define TOPIC_DIAG            TOPIC_PREFIX_ESP "/diag"           // retained: diagnostica dei reset e del loop (>= 6.4.2)
 #define TOPIC_AUTOTUNE_STATE  TOPIC_PREFIX_ESP "/autotune_state"
 #define TOPIC_AUTOTUNE_RESULT TOPIC_PREFIX_ESP "/autotune_result"
 #define TOPIC_LOG             TOPIC_PREFIX_ESP "/log"

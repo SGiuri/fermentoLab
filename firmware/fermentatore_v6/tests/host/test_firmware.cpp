@@ -13,6 +13,9 @@
 #include "config.h"
 #include "display.h"
 #include "uscite_rele.h"
+#include "diag_reset.h"
+#include <esp_rom_sys.h>
+#include <soc/rtc.h>
 
 #include <ArduinoJson.h>
 
@@ -801,6 +804,103 @@ static void scenario_persistenza_b() {
   remove(FILE_NVS);
 }
 
+static DynamicJsonDocument ultimo_diag() {
+  DynamicJsonDocument doc(2048);
+  for (auto it = g_mock_pubblicazioni.rbegin(); it != g_mock_pubblicazioni.rend(); ++it) {
+    if (it->topic == TOPIC_DIAG) {
+      const DeserializationError err = deserializeJson(doc, it->payload);
+      VERIFICA(!err, "payload esp/diag non è JSON valido: %s", it->payload.c_str());
+      return doc;
+    }
+  }
+  return doc;
+}
+
+// Diagnostica dei reset (>= 6.4.2): codice hardware, tempo dall'ultimo giro del loop e dall'ultima commutazione
+// di un relè, sezione in corso, massimo intervallo tra due giri. I dati RTC sopravvivono al "reset" simulato
+// perché RTC_NOINIT_ATTR è una normale variabile statica nei test, come lo è la memoria RTC sul chip.
+static void scenario_diagnostica_reset() {
+  // --- 1. Sketch reale: primo boot (RTC mai scritta), esp/diag valido, loop regolare ---
+  g_mock_hw_reset = 16;  // RTCWDT_RTC_RESET
+  g_mock_ds_temp = 20.0f;
+  g_modello_termico = true;
+  g_imp.temp = 20.0;
+  avvia_firmware();
+  avvia_profilo_costante(22.0f);
+  avanza(15 * 60 * 1000UL);
+
+  auto d = ultimo_diag();
+  VERIFICA(d.containsKey("reset") && d.containsKey("loop"), "esp/diag senza reset/loop");
+  VERIFICA(!(d["reset"]["valido"] | true), "primo boot: memoria RTC dichiarata integra");
+  VERIFICA((d["reset"]["hw"] | 0) == 16, "hw %d", (int)(d["reset"]["hw"] | 0));
+  VERIFICA(std::string(d["reset"]["hw_nome"] | "") == "RTCWDT_RTC_RESET", "hw_nome %s", (const char*)(d["reset"]["hw_nome"] | ""));
+  VERIFICA((d["loop"]["max_ms"] | 99999U) <= 300U, "loop.max_ms %u con passo di 250 ms", (unsigned)(d["loop"]["max_ms"] | 0U));
+  VERIFICA((d["loop"]["lenti_1s"] | 99) == 0 && (d["loop"]["lenti_10s"] | 99) == 0, "giri lenti in un loop regolare");
+  VERIFICA(std::string(d["firmware"] | "") == FIRMWARE_VERSION, "firmware %s", (const char*)(d["firmware"] | ""));
+  for (const auto& p : g_mock_pubblicazioni) {
+    if (p.topic == TOPIC_DIAG) {
+      VERIFICA(p.payload.size() < 560, "payload esp/diag di %u byte: buffer di 640", (unsigned)p.payload.size());
+      VERIFICA(p.retain, "esp/diag non retained");
+    }
+  }
+  // esp/state resta com'era: nessun campo aggiunto (limite dei 900 byte del test stato_json).
+  VERIFICA(!ultimo_stato().containsKey("diag_reset"), "diag_reset finito in esp/state");
+
+  // --- 2. Un blocco del loop di 3 s nella sezione rete ---
+  diag_reset_sezione(SEZ_RETE);
+  g_mock_ms += 3000;
+  diag_reset_giro();
+  VERIFICA(diag_reset_loop().max_ms >= 3000 && diag_reset_loop().max_ms < 3400, "max_ms %u", (unsigned)diag_reset_loop().max_ms);
+  VERIFICA(diag_reset_loop().max_sez == SEZ_RETE, "max_sez %s", diag_reset_nome_sezione(diag_reset_loop().max_sez));
+  VERIFICA(diag_reset_loop().lenti_1s == 1 && diag_reset_loop().lenti_10s == 0, "contatori giri lenti %u/%u",
+           (unsigned)diag_reset_loop().lenti_1s, (unsigned)diag_reset_loop().lenti_10s);
+
+  // --- 3. "Reset" 400 ms dopo l'accensione del freddo, mentre il firmware era nella sezione controllo ---
+  diag_reset_commutazione('F', false);
+  g_mock_ms += 400;
+  diag_reset_sezione(SEZ_CONTROLLO);
+  g_mock_hw_reset = 7;  // TG0WDT_SYS_RESET
+  diag_reset_init();
+  const DiagReset& r = diag_reset_precedente();
+  VERIFICA(r.valida, "dati RTC non integri dopo un reset con memoria conservata");
+  VERIFICA(r.hw_codice == 7 && std::string(r.hw_nome) == "TG0WDT_SYS_RESET", "hw %u %s", (unsigned)r.hw_codice, r.hw_nome);
+  VERIFICA(!r.rtc_azzerato, "rtc_azzerato senza reset del dominio RTC");
+  VERIFICA(r.comm_ms == 400 && r.comm_rele == 'F' && !r.comm_acceso, "commutazione %ld ms %c acc=%d", (long)r.comm_ms, r.comm_rele ? r.comm_rele : '-', (int)r.comm_acceso);
+  VERIFICA(r.giro_ms == 400, "giro_ms %ld (atteso 400)", (long)r.giro_ms);
+  VERIFICA(r.sezione == SEZ_CONTROLLO, "sezione %s", diag_reset_nome_sezione(r.sezione));
+  VERIFICA(r.loop_max_ms >= 3000 && r.loop_max_sez == SEZ_RETE, "loop_max %lu ms in %s", (unsigned long)r.loop_max_ms, diag_reset_nome_sezione(r.loop_max_sez));
+  VERIFICA(diag_reset_loop().max_ms == 0 && diag_reset_loop().lenti_1s == 0, "contatori del boot corrente non azzerati");
+
+  // --- 4. Reset del dominio RTC (RTCWDT_RTC_RESET): il contatore riparte, i tempi non sono affidabili ---
+  g_mock_ms += 1000;
+  g_mock_rtc_zero_ms = g_mock_ms;
+  g_mock_hw_reset = 16;
+  diag_reset_init();
+  VERIFICA(diag_reset_precedente().rtc_azzerato, "reset del contatore RTC non riconosciuto");
+  VERIFICA(diag_reset_precedente().giro_ms == -1, "giro_ms %ld con contatore azzerato", (long)diag_reset_precedente().giro_ms);
+}
+
+
+// Integrazione con uscite_rele: la commutazione reale dei relè finisce nei dati RTC.
+static void scenario_diagnostica_reset_rele() {
+  g_mock_hw_reset = 3;
+  g_mock_ds_temp = 20.0f;
+  g_modello_termico = true;
+  g_imp.temp = 20.0;
+  avvia_firmware();
+  avvia_profilo_costante(22.0f);
+  avanza(20 * 60 * 1000UL);
+  VERIFICA(g_stat.heat.commutazioni + (rele_heat() ? 1 : 0) > 0 || rele_heat(), "il caldo non è mai stato acceso: test non significativo");
+  g_mock_hw_reset = 12;
+  diag_reset_init();
+  const DiagReset& r = diag_reset_precedente();
+  VERIFICA(r.valida, "dati RTC non integri");
+  VERIFICA(r.comm_rele == 'C', "ultimo relè commutato '%c', atteso il caldo", r.comm_rele ? r.comm_rele : '-');
+  VERIFICA(r.comm_ms >= 0 && r.comm_ms < 20 * 60 * 1000L, "comm_ms %ld", (long)r.comm_ms);
+  VERIFICA(r.giro_ms >= 0 && r.giro_ms <= 300, "giro_ms %ld con loop a 250 ms", (long)r.giro_ms);
+  VERIFICA(std::string(r.hw_nome) == "SW_CPU_RESET", "hw_nome %s", r.hw_nome);
+}
+
 // Payload esp/state: JSON valido, nuovi campi, nessuna temperatura fittizia al boot.
 static void scenario_stato_json() {
   g_mock_ds_temp = (float)DEVICE_DISCONNECTED_C;
@@ -1066,6 +1166,8 @@ int main(int argc, char** argv) {
     else if (s == "profilo_pausa_sensore") scenario_profilo_pausa_sensore();
     else if (s == "stato_json") scenario_stato_json();
     else if (s == "sensore_diagnostica") scenario_sensore_diagnostica();
+    else if (s == "diagnostica_reset") scenario_diagnostica_reset();
+    else if (s == "diagnostica_reset_rele") scenario_diagnostica_reset_rele();
     else if (s == "controllo_didattico") scenario_controllo_didattico();
     else if (s == "isteresi_regolabile") scenario_isteresi_regolabile();
     else {

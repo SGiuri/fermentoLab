@@ -206,8 +206,8 @@ firmware, nessuna informazione nuova), `stress_pompa` (vedi sotto), `corrente` (
 
 ### Quali test ripetere dopo il flash della 6.4.0 e l'intervento hardware
 
-> Il firmware che verrà flashato è la **6.4.1** (= 6.4.0 + contatori diagnostici del sensore, nessuna
-> modifica al controllo): la valutazione qui sotto vale anche per lei.
+> Il firmware che verrà flashato è la **6.4.2** (= 6.4.1 + diagnostica dei reset, vedi §7; nessuna modifica
+> al controllo): la valutazione qui sotto vale anche per lei.
 
 Valutazione del 2026-09-19, test per test. La 6.4.0 cambia *solo* come il profilo avanza nel tempo
 (contatore locale al posto dell'epoch); l'intervento hardware (condensatore su EN, eventuale snubber)
@@ -229,6 +229,29 @@ riguarda i reset alla commutazione della pompa.
 su 12), qualunque test con molti cicli della pompa — `modo_on_off` in particolare, che li forza di
 proposito — può fallire per il solo criterio "riavvii spontanei" senza che ci sia un problema nuovo.
 Un fallimento di quel tipo va riletto dopo l'intervento, non trattato come una regressione.
+
+### Diagnosi dei reset con la 6.4.2 (`esp/diag`)
+
+I reset osservati finora hanno causa `poweron` (18/09) e `wdt` (dal 19/09 sera). La 6.4.2 permette di capire
+cosa li provoca senza collegare l'USB: il firmware lascia in memoria RTC l'ultimo giro del loop, l'ultimo relè
+commutato e la sezione del loop in corso, e al boot successivo li pubblica in `esp/diag` (contratto in
+[04_CONTRATTO_HASS.md §2.1c](04_CONTRATTO_HASS.md)). Entità: `sensor.f1_v6_reset_hardware` (con tutti i campi
+come attributi), `_reset_ultimo_giro`, `_reset_ultima_commutazione`, `_loop_massimo`, `_loop_sezione_lenta`,
+`_loop_giri_lenti`.
+
+Come leggerle (ipotesi da verificare sul campo, non risultati):
+
+| Osservazione | Lettura |
+|---|---|
+| `hw_nome` `RTCWDT_*` o `TGWDT_*`, `giro_ms` ≈ tempo di avvio, `comm_ms` di pochi secondi, `comm_rele` = pompa spenta | Disturbo elettrico alla commutazione: il loop girava un istante prima. Conferma la correlazione con la pompa |
+| `hw_nome` `TG0WDT_SYS_RESET` o `giro_ms` vicino a 60 000 | Il loop era fermo: blocco del software. La sezione dice dove |
+| `giro_ms` di circa 9 000-10 000 | Avvio bloccato: watchdog RTC del bootloader (il chip si è riavviato e non è ripartito) |
+| `rtc_azzerato` true (tipico di `RTCWDT_RTC_RESET`) | Reset del dominio RTC: i tempi non sono affidabili, conta il solo codice |
+| `valido` false, `hw_nome` `POWERON_RESET` | Vera perdita di alimentazione: nessun dato del boot precedente |
+| `loop_max_ms` alto senza reset, `loop_max_sez` `rete` | Connessione WiFi/MQTT lenta: risponde a «ci sono operazioni oltre 60 s?» |
+
+Il tempo `giro_ms` include l'avvio del chip (ROM e bootloader), che va misurato: il test `riavvio` provoca un
+riavvio comandato (`SW_CPU_RESET`) e dà il valore di riferimento per tutti gli altri reset.
 
 ## 8. Simulatore offline (`tests/collaudo/simula_collaudo.py`)
 

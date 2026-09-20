@@ -1,5 +1,28 @@
 # Changelog - Fermentatore V6
 
+## [v6.4.2] - 2026-09-20
+### Diagnostica dei reset
+- **Nuovo modulo `diag_reset`** e nuovo topic `esp/diag` (retained). I reset `wdt` osservati su F1 dal 19/09
+  hanno una causa non chiara: il watchdog del firmware (60 s) riporterebbe `task_wdt`, e tre reset su sei sono
+  avvenuti 0,4-3 s dopo lo spegnimento della pompa. Senza USB collegato non c'era modo di distinguere un
+  blocco del software da un disturbo elettrico.
+- Il firmware lascia in memoria RTC (`RTC_NOINIT`, sopravvive a watchdog, brownout e riavvii software) l'ultimo
+  giro del loop (aggiornato ogni 100 ms), l'ultima commutazione di un relè e la sezione del loop in corso, e al
+  boot successivo li confronta con il contatore RTC. `esp/diag` pubblica: codice hardware del reset (`hw`,
+  `hw_nome`, quello della ROM, es. `RTCWDT_RTC_RESET`), `giro_ms`, `comm_ms` con relè e stato, sezione,
+  `rtc_azzerato`, `valido`; e per il boot corrente il massimo intervallo tra due giri del loop, la sezione
+  responsabile e i contatori dei giri oltre 1 s e 10 s (risponde anche a «ci sono operazioni oltre 60 s?»).
+- Nessun cambiamento nel controllo, nei relè, nel watchdog (resta 60 s) né in `esp/state`: `esp/state` ha già
+  un limite di 900 byte nei test, quindi i dati stanno in un topic a parte. Il loop misura ogni sezione con
+  `millis()` e scrive due byte in RTC per sezione; `rtc_time_get()` si legge al massimo ogni 100 ms.
+- API: `diag_reset_init()` è la prima riga di `setup()` (prima di `uscite_init()`, che altrimenti sovrascriverebbe
+  i dati); `uscite_rele.cpp` chiama `diag_reset_commutazione()` prima di scrivere il pin.
+- Test: nuovi scenari host `diagnostica_reset` (payload, giro lento, reset a 400 ms dalla commutazione, contatore
+  RTC azzerato) e `diagnostica_reset_rele` (integrazione con `uscite_rele`): 24 scenari, tutti superati.
+  Compilato per ESP32.
+- Entità HA `sensor.f1_v6_reset_*` e `sensor.f1_v6_loop_*` nel pacchetto `fermentatore_v6_f1_entita.yaml`;
+  come leggerle: `docs/06_COLLAUDO_F1.md §7`.
+
 ## [Solo Home Assistant] - 2026-09-20
 ### Metriche dell'algoritmo per la didattica (nessuna modifica al firmware)
 - Nuovo pacchetto `hass_spec/packages/fermentatore_v6_f1_metriche.yaml` (e copia F2 generata): periodo e

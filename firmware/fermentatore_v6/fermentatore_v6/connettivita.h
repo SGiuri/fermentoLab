@@ -3,6 +3,7 @@
 #include "controller.h"
 #include "autotune.h"
 #include "sensor_watchdog.h"
+#include "diag_reset.h"
 
 // ============================================================
 // Callback comandi MQTT
@@ -87,6 +88,8 @@ void mqtt_imposta_nome_profilo(const char* nome);
 // ============================================================
 void mqtt_pubblica_stato(const StatoHeartbeat& stato);
 void mqtt_pubblica_controllo(const StatoControllo& c);
+// Diagnostica dei reset e dei tempi del loop (topic esp/diag, retained; firmware >= 6.4.2)
+void mqtt_pubblica_diag(const DiagReset& r, const DiagLoop& l);
 void mqtt_pubblica_ack(const char* request_id,
                        const char* command,
                        const char* status,

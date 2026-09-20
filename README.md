@@ -15,7 +15,7 @@ It started as a **school project** and is also built to be a **teaching tool**: 
 swap control algorithms (on/off, hysteresis, P, PI, PID), watch the P, I and D terms live and run step-response
 experiments on a real tank, without beer. See [Learning with it](#learning-with-it-didactic-mode).
 
-> **Status (2026-09-20).** The active firmware is `fermentatore_v6` (source version **6.4.1**). One
+> **Status (2026-09-20).** The active firmware is `fermentatore_v6` (source version **6.4.2**). One
 > controller, **F1**, exists as a bench unit running 6.3.0 and is being validated with an automated test
 > suite before real beer goes in. A second one, **F2**, exists only as a software identity and a design
 > ([`13_F2_SCHEDA_INDIPENDENTE.md`](firmware/fermentatore_v6/docs/13_F2_SCHEDA_INDIPENDENTE.md)). There is a
@@ -284,7 +284,7 @@ Short version — details and the exact file list are in
 
 | Level | How | What it covers |
 |---|---|---|
-| Host tests (minutes, no hardware) | `powershell -File firmware\fermentatore_v6\tests\host\run_tests.ps1` (needs MSVC Build Tools) | The real firmware sources compiled against Arduino/ESP32 mocks: **22 scenarios**, including 48 h thermal simulations |
+| Host tests (minutes, no hardware) | `powershell -File firmware\fermentatore_v6\tests\host\run_tests.ps1` (needs MSVC Build Tools) | The real firmware sources compiled against Arduino/ESP32 mocks: **24 scenarios**, including 48 h thermal simulations |
 | Offline test-suite simulator | `python firmware/fermentatore_v6/tests/collaudo/simula_collaudo.py` | The real AppDaemon test engine against a modeled fermenter, in seconds |
 | On-hardware collaudo (hours to days) | AppDaemon app in Home Assistant | Scripted tests over real MQTT with numeric pass criteria: sensor recovery, relay switching, profile ramps, alarms — [`06_COLLAUDO_F1.md`](firmware/fermentatore_v6/docs/06_COLLAUDO_F1.md) |
 | E2E MQTT | `firmware/fermentatore_v6/tools/v6/test_e2e.py` (broker credentials via `MQTT_SERVER`, `MQTT_USER`, `MQTT_PASS` environment variables) | Command/ack/state contract against a live device |

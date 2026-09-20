@@ -268,6 +268,69 @@ mqtt:
       state_class: total_increasing
       entity_category: diagnostic
 
+    # --- Diagnostica dei reset e del loop (esp/diag, firmware >= 6.4.2) ---
+    # Topic retained, ripubblicato a ogni heartbeat. I valori "reset" descrivono il reset che ha preceduto
+    # l'ULTIMO avvio e cambiano solo a un nuovo riavvio; "loop" riguarda il boot corrente. Come leggerli:
+    # docs/06_COLLAUDO_F1.md §7. Con firmware < 6.4.2 restano sconosciuti.
+    - name: "F1 V6 Reset Hardware"
+      unique_id: f1_v6_diag_reset_hw
+      icon: mdi:restart-alert
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('reset') or {}).get('hw_nome') }}"
+      json_attributes_topic: "fermentazione/v6/f1/esp/diag"
+      json_attributes_template: "{{ (value_json.get('reset') or {}) | tojson }}"
+      entity_category: diagnostic
+
+    - name: "F1 V6 Reset Ultimo Giro"
+      unique_id: f1_v6_diag_reset_giro_ms
+      icon: mdi:timer-sand
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: >-
+        {% set g = (value_json.get('reset') or {}).get('giro_ms') %}
+        {{ g if g is number and g >= 0 else none }}
+      unit_of_measurement: "ms"
+      entity_category: diagnostic
+
+    - name: "F1 V6 Reset Ultima Commutazione"
+      unique_id: f1_v6_diag_reset_comm_ms
+      icon: mdi:electric-switch
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: >-
+        {% set g = (value_json.get('reset') or {}).get('comm_ms') %}
+        {{ g if g is number and g >= 0 else none }}
+      unit_of_measurement: "ms"
+      entity_category: diagnostic
+
+    - name: "F1 V6 Loop Massimo"
+      unique_id: f1_v6_diag_loop_max_ms
+      icon: mdi:speedometer-slow
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('loop') or {}).get('max_ms') }}"
+      unit_of_measurement: "ms"
+      state_class: measurement
+      entity_category: diagnostic
+
+    - name: "F1 V6 Loop Sezione Lenta"
+      unique_id: f1_v6_diag_loop_max_sez
+      icon: mdi:progress-clock
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('loop') or {}).get('max_sez') }}"
+      entity_category: diagnostic
+
+    - name: "F1 V6 Loop Giri Lenti"
+      unique_id: f1_v6_diag_loop_lenti_1s
+      icon: mdi:snail
+      state_topic: "fermentazione/v6/f1/esp/diag"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('loop') or {}).get('lenti_1s') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+
     # --- Eventi (senza scadenza: restano visibili anche con ESP offline) ---
     - name: "F1 V6 Allarme Tipo"
       unique_id: ferm_v6_f1_allarme_tipo

@@ -17,6 +17,7 @@
 #include "uscite_rele.h"
 #include "profilo.h"
 #include "log.h"
+#include "diag_reset.h"
 
 static ControllerState g_controller = {};
 static ControllerConfig g_config = {
@@ -314,6 +315,7 @@ static void pubblica_stato(unsigned long now) {
         get_stato_fsm_string(), profilo_fsm_str());
   mqtt_pubblica_stato(build_heartbeat());
   mqtt_pubblica_controllo(build_controllo());
+  mqtt_pubblica_diag(diag_reset_precedente(), diag_reset_loop());
   g_last_status_ms = now;
   g_pub_fsm  = get_stato_fsm_string();
   g_pub_heat = uscite_riscaldatore_acceso();
@@ -975,6 +977,9 @@ static void handle_network(unsigned long now) {
 }
 
 void setup() {
+  // Legge i dati del reset precedente (memoria RTC) prima che qualunque altra cosa li sovrascriva:
+  // pochi microsecondi, poi i relè.
+  diag_reset_init();
   // Relè OFF prima di qualunque altra cosa.
   uscite_init();
 
@@ -986,6 +991,13 @@ void setup() {
   Serial.println("[WIFI] In Arduino IDE set Tools > Core Debug Level = Verbose for full WiFi logs");
   LOG_I("BOOT", "Fermentatore v6 fw=%s device=%s reset=%s",
         FIRMWARE_VERSION, DEVICE_FERMENTER_ID, reset_reason_str());
+  {
+    const DiagReset& d = diag_reset_precedente();
+    LOG_I("DIAG", "Reset precedente: hw=%u %s valida=%d giro=%ld ms comm=%ld ms (%s %s) sezione=%s loop_max=%lu ms",
+          (unsigned)d.hw_codice, d.hw_nome, d.valida ? 1 : 0, (long)d.giro_ms, (long)d.comm_ms,
+          diag_reset_nome_rele(d.comm_rele), d.comm_acceso ? "on" : "off",
+          diag_reset_nome_sezione(d.sezione), (unsigned long)d.loop_max_ms);
+  }
 
   const esp_reset_reason_t rr = esp_reset_reason();
   if (g_rtc_magic != RTC_MAGIC || rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT) {
@@ -1080,17 +1092,25 @@ void setup() {
   }
 
   g_ms_inizio_loop = millis();
+  diag_reset_boot_completato();
 }
 
 void loop() {
   esp_task_wdt_reset();
   const unsigned long now = millis();
 
+  // Le chiamate diag_reset_* misurano quanto dura ogni sezione e lasciano tracce in memoria RTC
+  // (vedi diag_reset.h): non cambiano il comportamento del loop.
+  diag_reset_sezione(SEZ_SERIALE);
   process_serial_commands();
+  diag_reset_sezione(SEZ_RETE);
   handle_network(now);
+  diag_reset_sezione(SEZ_SENSORE);
   handle_sensor_logic(now);
+  diag_reset_sezione(SEZ_DISPLAY);
   handle_display(now);
 
+  diag_reset_sezione(SEZ_CONTROLLO);
   const bool temp_ok = temperatura_utilizzabile();
 
   if (now - g_last_control_ms >= CONTROL_INTERVAL_MS) {
@@ -1137,6 +1157,7 @@ void loop() {
   }
 
   // Stadio uscite a ogni loop: risoluzione fine della finestra duty e spegnimenti immediati.
+  diag_reset_sezione(SEZ_USCITE);
   const RichiestaUscite richiesta = {
     g_controller.heat_on,
     g_controller.cool_on,
@@ -1146,6 +1167,9 @@ void loop() {
   const bool forza_spegnimento = !temp_ok || g_controller.runtime_state != RuntimeState::RUNNING;
   uscite_aggiorna(richiesta, forza_spegnimento, g_temp, setpoint_limitato(), now);
 
+  diag_reset_sezione(SEZ_HEARTBEAT);
   handle_heartbeat(now);
+  diag_reset_sezione(SEZ_NVS);
   handle_persistenza(now);
+  diag_reset_giro();
 }

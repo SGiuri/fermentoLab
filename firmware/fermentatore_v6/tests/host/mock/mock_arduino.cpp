@@ -74,6 +74,9 @@ void MockEsp::restart() {
 }
 
 esp_reset_reason_t g_mock_reset_reason = ESP_RST_POWERON;
+int g_mock_hw_reset = 1;                 // esp_rom_get_reset_reason(0): 1 = POWERON_RESET
+unsigned long g_mock_rtc_zero_ms = 0;    // istante simulato in cui il contatore RTC è ripartito da zero
+uint64_t rtc_time_get() { return (uint64_t)(g_mock_ms - g_mock_rtc_zero_ms) * 150ULL; }  // 150 kHz
 
 // ---------------- Task watchdog ----------------
 uint32_t g_mock_wdt_timeout_ms = 5000;

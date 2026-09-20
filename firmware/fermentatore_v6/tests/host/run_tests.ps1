@@ -22,6 +22,8 @@ $scenari = @(
   "profilo_validazione",
   "stato_json",
   "sensore_diagnostica",
+  "diagnostica_reset",
+  "diagnostica_reset_rele",
   "controllo_didattico",
   "isteresi_regolabile",
   "wifi_assente",

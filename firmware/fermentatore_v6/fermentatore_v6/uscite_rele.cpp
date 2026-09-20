@@ -1,5 +1,6 @@
 #include "uscite_rele.h"
 #include "config.h"
+#include "diag_reset.h"
 
 struct StatoRele {
   uint8_t       pin;
@@ -23,6 +24,8 @@ static void scrivi_rele(StatoRele& r, bool acceso, unsigned long now_ms) {
   } else {
     r.ts_spento_ms = now_ms;
   }
+  // Segnale per la diagnostica dei reset: annotato PRIMA della scrittura, in memoria RTC.
+  diag_reset_commutazione(r.pin == PIN_RISCALDATORE ? 'C' : 'F', acceso);
   // Relays are ACTIVE LOW.
   digitalWrite(r.pin, acceso ? RELAY_ON : RELAY_OFF);
   g_commutazioni++;

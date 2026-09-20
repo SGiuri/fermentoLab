@@ -39,7 +39,7 @@ validato con i test host e col simulatore offline, pronto per il flash.
 - [ ] Quando arrivano le funzioni di collaudo 6.5.0 per il sensore (§3), estendere
   `sensore_breve`/`sensore_lungo` per esercitare anche il caso rampa, non solo la tenuta. Vedi
   [11_TIMING_PROFILO.md §6.3](11_TIMING_PROFILO.md#63-test-proposto-guasto-del-sensore-durante-una-rampa-estensione-di-sensore_brevesensore_lungo).
-- [ ] Flash di 6.4.1 (= 6.4.0 + contatori del sensore) e ripetizione *selettiva* dei test alla luce del nuovo setup, al prossimo accesso a F1 — vedi §1.
+- [ ] Flash di 6.4.2 (= 6.4.1 + diagnostica dei reset `esp/diag`, = 6.4.0 + contatori del sensore) e ripetizione *selettiva* dei test alla luce del nuovo setup, al prossimo accesso a F1 — vedi §1.
 
 ## 1. Prima del 3 ottobre (bloccanti, solo F1)
 
@@ -51,7 +51,7 @@ validato con i test host e col simulatore offline, pronto per il flash.
 - [ ] **Concludere la Fase A su 6.3.0** (in corso dal 2026-09-19 13:47, fine stimata martedì 22/09
   notte): `diacetile`, `rampa`, i quattro modi di controllo, `cold_crash`, `allarme_freddo`. Si
   interrompe comunque al flash di lunedì: i test non finiti si rilanciano dopo.
-- [ ] **Dopo il flash di 6.4.1 e l'intervento hardware, ripetere solo alcuni test, non tutta la Fase
+- [ ] **Dopo il flash di 6.4.2 e l'intervento hardware, ripetere solo alcuni test, non tutta la Fase
   A**: `riavvio`, `rampa`, `stress_pompa` (subito dopo l'intervento), `corrente` nella variante in
   rampa, `lager` come prova rapida — motivazioni test per test in
   [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md#quali-test-ripetere-dopo-il-flash-della-640-e-lintervento-hardware).

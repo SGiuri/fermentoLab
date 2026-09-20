@@ -77,6 +77,7 @@ e `/esp/log`.
 | `fermentazione/v6/{id}/esp/state`              | YES    | ogni 30 s e subito al cambio relè/FSM |
 | `fermentazione/v6/{id}/esp/availability`       | YES    | `online` alla connessione, `offline` = LWT |
 | `fermentazione/v6/{id}/esp/controllo`          | YES    | insieme a esp/state (firmware >= 6.3.0) |
+| `fermentazione/v6/{id}/esp/diag`               | YES    | insieme a esp/state (firmware >= 6.4.2) |
 | `fermentazione/v6/{id}/esp/ack`                | no     | dopo ogni comando               |
 | `fermentazione/v6/{id}/esp/alarm`              | no     | su eventi anomali (non più LWT) |
 | `fermentazione/v6/{id}/esp/autotune_state`     | no     | aggiornamenti progresso autotune|
@@ -165,6 +166,39 @@ Grandezze interne del controllore, per la didattica. Pubblicato insieme a `esp/s
   minima (valore sotto cui il duty viene alzato). Il relè segue poi la finestra PWM di `finestra_s`.
 - `d` è calcolato sulla misura (−Kd·dT/dt) con filtro di 300 s.
 - Controllo fermo o sensore non utilizzabile: `attivo` false e termini a 0.
+
+### 2.1c esp/diag (firmware >= 6.4.2, retain=true)
+
+Diagnostica dei reset e dei tempi del loop. Pubblicato insieme a `esp/state`, in un topic a parte perché
+`esp/state` è già vicino al limite del buffer (test host `stato_json`: meno di 900 byte).
+
+```json
+{
+  "reset": {"valido": true, "hw": 16, "hw_nome": "RTCWDT_RTC_RESET", "rtc_azzerato": false,
+            "giro_ms": 1204, "comm_ms": 412, "comm_rele": "freddo", "comm_stato": "off",
+            "sezione": "controllo", "loop_max_ms": 85, "loop_max_sez": "display"},
+  "loop": {"max_ms": 12, "max_sez": "rete", "lenti_1s": 0, "lenti_10s": 0, "setup_ms": 8123},
+  "uptime_s": 1213, "firmware": "6.4.2", "fermenter_id": "f1"
+}
+```
+
+- `reset` descrive **il reset che ha preceduto l'ultimo avvio**; non cambia finché l'ESP32 non si riavvia.
+  - `hw`, `hw_nome`: codice hardware della ROM (`esp_rom_get_reset_reason`), lo stesso che la seriale stampa
+    come `rst:0x10 (RTCWDT_RTC_RESET)`. Distingue i watchdog hardware (RTC, timer group) dal task watchdog del
+    firmware, che in `esp/state.reset_reason` compare come `task_wdt`.
+  - `giro_ms`: millisecondi tra l'ultimo giro del loop e l'avvio del nuovo firmware. `comm_ms`, `comm_rele`
+    (`caldo`|`freddo`), `comm_stato` (`on`|`off`): la stessa cosa per l'ultima commutazione di un relè.
+    Risoluzione di `giro_ms`: 100 ms; precisione dei tempi: circa ±10 % (clock RTC lento).
+  - `sezione`: dove si trovava il firmware (`seriale`, `rete`, `sensore`, `display`, `controllo`, `uscite`,
+    `heartbeat`, `nvs`, `boot`; `nessuna` = tra due giri; `ignota` = dato non integro).
+  - `loop_max_ms`, `loop_max_sez`: massimo intervallo tra due giri del loop nel boot precedente e sezione più lenta.
+  - `valido` false: la memoria RTC non era integra (vera perdita di alimentazione): gli altri campi non contano.
+    `rtc_azzerato` true: il contatore RTC è ripartito da zero (reset del dominio RTC): `giro_ms` e `comm_ms` sono -1.
+  - `giro_ms` e `comm_ms` valgono -1 se non calcolabili (nessuna commutazione, contatore azzerato).
+- `loop` riguarda il **boot corrente**: `max_ms` è il massimo intervallo tra due giri dal boot, `max_sez` la
+  sezione responsabile, `lenti_1s` e `lenti_10s` contano i giri oltre 1 s e 10 s, `setup_ms` la durata di `setup()`
+  (WiFi e MQTT del boot compresi). Un caricamento OTA compare come un giro lento nella sezione `rete`.
+- Firmware < 6.4.2: il topic non esiste, le entità `sensor.f1_v6_reset_*` e `sensor.f1_v6_loop_*` restano sconosciute.
 
 ### 2.2 esp/ack
 
