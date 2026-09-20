@@ -111,6 +111,8 @@ e `/esp/log`.
   "rssi":              -61,
   "heap_libero":       180000,
   "commutazioni":      42,
+  "sensore_diag":      {"letture": 5210, "non_valide": 3, "scollegato": 1, "poweron_85": 0,
+                        "fuori_scala": 0, "picco": 2, "vicino_rele": 1, "power_cycle": 0},
   "firmware":          "6.2.0",
   "hardware_target":   "esp32-wroom",
   "fermenter_id":      "f1"
@@ -127,6 +129,12 @@ Note sui campi (firmware 6.2.0):
 - `sensore_ok`: `false` quando la temperatura non è utilizzabile e i relè sono forzati OFF.
   In HA mostrare la temperatura come sconosciuta in questo caso.
 - `temp_eta_s`: età dell'ultima lettura valida in secondi (`-1` = mai).
+- `sensore_diag` (firmware >= 6.4.1): contatori dal boot delle letture del DS18B20, che ripartono da zero a
+  ogni riavvio. `letture` = conversioni completate; `non_valide` = scartate = `scollegato` (NaN o -127)
+  + `poweron_85` + `fuori_scala` (fuori −10…40 °C) + `picco` (filtro anti-picco); `vicino_rele` = scartate
+  entro 5 s da una commutazione di un relè (sottoinsieme di `non_valide`); `power_cycle` = cicli di
+  alimentazione del sensore. Le letture scartate non arrivano mai in `temp_reale`: solo questi contatori
+  le rendono visibili. Assente con firmware < 6.4.1.
 - `reset_reason`: `poweron | software | panic | task_wdt | int_wdt | wdt | brownout | external | deepsleep | other`.
 
 Valori possibili `control_mode`: `on_off | on_off_hyst_sym | on_off_hyst_asym |

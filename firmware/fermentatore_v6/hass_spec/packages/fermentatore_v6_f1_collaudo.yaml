@@ -228,7 +228,7 @@ script:
     mode: single
     fields:
       gruppo:
-        description: "A (firmware attuale), B (firmware 6.4.0), C (manuali), tutti, nessuno"
+        description: "A (firmware attuale), B (firmware 6.5.0), C (manuali), tutti, nessuno"
         example: A
     sequence:
       - variables:

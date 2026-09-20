@@ -39,12 +39,33 @@ static bool oscillazione_incoerente(float t) {
       && (d1 * d2) < 0.0f;
 }
 
+enum class CausaNonValida : uint8_t { NESSUNA = 0, SCOLLEGATO, POWERON_85, FUORI_SCALA, PICCO };
+
+// Solo le cause "fisiche": il picco si riconosce dopo, con lo storico dei campioni.
+static CausaNonValida classifica_lettura(float t) {
+  if (isnan(t) || t == DEVICE_DISCONNECTED_C) return CausaNonValida::SCOLLEGATO;
+  if (t == 85.0f) return CausaNonValida::POWERON_85;  // DS18B20 power-on marker
+  if (t < -10.0f || t > 40.0f) return CausaNonValida::FUORI_SCALA;
+  return CausaNonValida::NESSUNA;
+}
+
 static bool temp_valida(float t) {
-  if (isnan(t)) return false;
-  if (t == DEVICE_DISCONNECTED_C) return false;
-  if (t == 85.0f) return false;  // DS18B20 power-on marker
-  if (t < -10.0f || t > 40.0f) return false;
-  return true;
+  return classifica_lettura(t) == CausaNonValida::NESSUNA;
+}
+
+static void conta_non_valida(SensorState& s, CausaNonValida causa, unsigned long ora,
+                             unsigned long ts_ultima_commutazione_ms) {
+  s.diag.non_valide++;
+  switch (causa) {
+    case CausaNonValida::SCOLLEGATO:  s.diag.scollegato++;  break;
+    case CausaNonValida::POWERON_85:  s.diag.poweron_85++;  break;
+    case CausaNonValida::FUORI_SCALA: s.diag.fuori_scala++; break;
+    case CausaNonValida::PICCO:       s.diag.picco++;       break;
+    case CausaNonValida::NESSUNA:     break;
+  }
+  if (ts_ultima_commutazione_ms != 0 && ora - ts_ultima_commutazione_ms <= SENSOR_DIAG_FINESTRA_RELE_MS) {
+    s.diag.vicino_rele++;
+  }
 }
 
 // Inizializza bus e scheduling senza toccare lo stato di errore/allarme.
@@ -78,6 +99,7 @@ static void registra_errore(SensorState& s, unsigned long ora, uint32_t allarme_
 
 void sensor_init(SensorState& s) {
   bus_init();
+  s.diag = SensorDiagnostica();
 
   s.ultima_temp_valida = DEFAULT_STANDBY_TEMP_C;
   s.ts_ultima_valida_ms = 0;
@@ -87,7 +109,8 @@ void sensor_init(SensorState& s) {
   s.ha_avuto_errore = false;
 }
 
-LetturaSensore sensor_aggiorna(SensorState& s, uint32_t allarme_timeout_minuti) {
+LetturaSensore sensor_aggiorna(SensorState& s, uint32_t allarme_timeout_minuti,
+                               unsigned long ts_ultima_commutazione_ms) {
   s.era_in_allarme = s.in_allarme;
 
   unsigned long ora = millis();
@@ -110,15 +133,19 @@ LetturaSensore sensor_aggiorna(SensorState& s, uint32_t allarme_timeout_minuti) 
 
   g_conversion_pending = false;
   const float t = g_ds18.getTempCByIndex(0);
+  s.diag.letture++;
 
-  if (!temp_valida(t)) {
+  const CausaNonValida causa = classifica_lettura(t);
+  if (causa != CausaNonValida::NESSUNA) {
     // Lettura fisicamente non valida
+    conta_non_valida(s, causa, ora, ts_ultima_commutazione_ms);
     g_osc_consecutive = 0;
     registra_errore(s, ora, allarme_timeout_minuti);
     return LetturaSensore::NON_VALIDA;
   }
 
   if (oscillazione_incoerente(t)) {
+    conta_non_valida(s, CausaNonValida::PICCO, ora, ts_ultima_commutazione_ms);
     g_osc_consecutive++;
     push_raw_temp(t);
     if (g_osc_consecutive >= SENSOR_OSC_CONSECUTIVE_LIMIT || s.ha_avuto_errore) {
@@ -158,7 +185,7 @@ void sensor_power_cycle_init() {
 }
 
 bool sensor_power_cycle(SensorState& s) {
-  (void)s;  // stato errore/allarme intenzionalmente preservato
+  s.diag.power_cycle++;  // stato errore/allarme intenzionalmente preservato
 
   digitalWrite(PIN_SENSOR_PWR, LOW);
   delay(500);

@@ -824,6 +824,12 @@ static void scenario_stato_json() {
   VERIFICA(std::fabs((st["temp_reale"] | 0.0f) - 18.5f) < 0.01f, "temp_reale %.2f", (float)(st["temp_reale"] | 0.0f));
   VERIFICA(st["sensore_ok"] | false, "sensore_ok false con sensore valido");
   VERIFICA(std::string(st["firmware"] | "") == FIRMWARE_VERSION, "firmware %s", (const char*)(st["firmware"] | ""));
+  for (const char* k : {"letture", "non_valide", "scollegato", "poweron_85", "fuori_scala", "picco", "vicino_rele", "power_cycle"}) {
+    VERIFICA(st["sensore_diag"].containsKey(k), "campo sensore_diag.%s mancante in esp/state", k);
+  }
+  for (const auto& p : g_mock_pubblicazioni) {
+    if (p.topic == TOPIC_STATE) VERIFICA(p.payload.size() < 900, "payload esp/state di %u byte: troppo vicino al buffer di 1024", (unsigned)p.payload.size());
+  }
 }
 
 
@@ -908,6 +914,117 @@ static void scenario_isteresi_regolabile() {
   VERIFICA(t_on > 0 && t_on <= 20.2, "refrigeratore acceso troppo tardi o mai: T=%.3f", t_on);
 }
 
+
+// Contatori di diagnostica del DS18B20 (6.4.1): letture, scartate per causa, vicino ai relè, power-cycle.
+struct DiagSensore {
+  unsigned long letture = 0, non_valide = 0, scollegato = 0, poweron_85 = 0, fuori_scala = 0,
+                picco = 0, vicino_rele = 0, power_cycle = 0;
+};
+
+static DiagSensore leggi_diag_sensore() {
+  avanza(STATUS_INTERVAL_MS);
+  const auto st = ultimo_stato();
+  DiagSensore d;
+  VERIFICA(st["sensore_diag"].is<JsonObjectConst>(), "sensore_diag mancante in esp/state");
+  const JsonObjectConst o = st["sensore_diag"].as<JsonObjectConst>();
+  d.letture     = o["letture"] | 0UL;
+  d.non_valide  = o["non_valide"] | 0UL;
+  d.scollegato  = o["scollegato"] | 0UL;
+  d.poweron_85  = o["poweron_85"] | 0UL;
+  d.fuori_scala = o["fuori_scala"] | 0UL;
+  d.picco       = o["picco"] | 0UL;
+  d.vicino_rele = o["vicino_rele"] | 0UL;
+  d.power_cycle = o["power_cycle"] | 0UL;
+  return d;
+}
+
+static void stampa_diag(const char* etichetta, const DiagSensore& d) {
+  printf("  %s: letture %lu, non valide %lu (scollegato %lu, 85C %lu, fuori scala %lu, picco %lu), vicino ai rele %lu, power-cycle %lu\n",
+         etichetta, d.letture, d.non_valide, d.scollegato, d.poweron_85, d.fuori_scala, d.picco, d.vicino_rele, d.power_cycle);
+}
+
+static void scenario_sensore_diagnostica() {
+  // Fase A: nessun relè, lettura pilotata a mano (il modello termico resta spento).
+  avvia_firmware();
+  g_mock_ds_temp = 20.0f;
+  avanza(2 * 60 * 1000UL);
+  const DiagSensore a = leggi_diag_sensore();
+  stampa_diag("dopo 2 min regolari", a);
+  VERIFICA(a.letture >= 20, "letture %lu dopo 2 min (attese ~24)", a.letture);
+  VERIFICA(a.non_valide == 0, "letture scartate senza alcun guasto: %lu", a.non_valide);
+  VERIFICA(a.vicino_rele == 0 && a.power_cycle == 0, "contatori spuri: vicino_rele %lu power_cycle %lu", a.vicino_rele, a.power_cycle);
+
+  g_mock_ds_temp = 85.0f;                          avanza(12 * 1000UL);   // marcatore di power-on
+  g_mock_ds_temp = 20.0f;                          avanza(30 * 1000UL);
+  g_mock_ds_temp = 50.0f;                          avanza(12 * 1000UL);   // fuori scala
+  g_mock_ds_temp = 20.0f;                          avanza(30 * 1000UL);
+  g_mock_ds_temp = (float)DEVICE_DISCONNECTED_C;   avanza(12 * 1000UL);   // -127
+  g_mock_ds_temp = 20.0f;                          avanza(30 * 1000UL);
+  for (int i = 0; i < 8; i++) {                                           // picchi alternati
+    g_mock_ds_temp = (i % 2 == 0) ? 28.0f : 20.0f;
+    avanza(SENSOR_READ_INTERVAL_MS);
+  }
+  g_mock_ds_temp = 20.0f;                          avanza(60 * 1000UL);
+  const DiagSensore b = leggi_diag_sensore();
+  stampa_diag("dopo le iniezioni", b);
+  VERIFICA(b.poweron_85 > a.poweron_85, "85 C non contato");
+  VERIFICA(b.fuori_scala > a.fuori_scala, "fuori scala non contato");
+  VERIFICA(b.scollegato > a.scollegato, "-127 non contato");
+  VERIFICA(b.picco > a.picco, "picchi alternati non contati");
+  VERIFICA(b.non_valide == b.scollegato + b.poweron_85 + b.fuori_scala + b.picco,
+           "totale %lu diverso dalla somma delle cause", b.non_valide);
+  VERIFICA(b.letture > b.non_valide, "più scartate (%lu) che letture (%lu)", b.non_valide, b.letture);
+  VERIFICA(b.vicino_rele == 0, "vicino_rele %lu senza nessuna commutazione dei relè", b.vicino_rele);
+
+  // Fase B: con i relè in funzione, una lettura persa subito dopo una commutazione va nel contatore
+  // "vicino ai relè", una persa lontano dalle commutazioni no.
+  g_modello_termico = true;
+  g_imp.temp = 17.0;
+  g_imp.ambiente = 15.0;
+  avvia_profilo_costante(20.0f);
+  avanza(5 * 60 * 1000UL);
+  VERIFICA(rele_heat(), "riscaldatore non acceso con T=%.2f e setpoint 20", g_imp.temp);
+  const DiagSensore c = leggi_diag_sensore();
+
+  const std::string step15 = "{\"step\":\"Primaria\",\"temp\":15.0,\"duration_hours\":500}";
+  invia("profile_set", comando("prof-2", epoch_adesso(), profilo_json("Test2", step15)));
+  VERIFICA(std::string(ultimo_ack("prof-2")["status"] | "") == "ok", "profile_set di prova rifiutato");
+  const unsigned long t0 = g_mock_ms;
+  while (rele_heat() && g_mock_ms - t0 < 2 * 60 * 1000UL) avanza(250);
+  VERIFICA(!rele_heat(), "riscaldatore non spento dopo il calo del setpoint");
+  g_sensore_guasto = true;
+  avanza(12 * 1000UL);
+  g_sensore_guasto = false;
+  const DiagSensore d = leggi_diag_sensore();
+  stampa_diag("guasto subito dopo lo spegnimento", d);
+  VERIFICA(d.scollegato >= c.scollegato + 2, "letture -127 contate: %lu", d.scollegato - c.scollegato);
+  VERIFICA(d.vicino_rele > c.vicino_rele, "nessuna lettura persa contata vicino ai relè");
+
+  avanza(5 * 60 * 1000UL);
+  const int sw0 = g_stat.heat.commutazioni + g_stat.cool.commutazioni;
+  const DiagSensore e = leggi_diag_sensore();
+  g_sensore_guasto = true;
+  avanza(12 * 1000UL);
+  g_sensore_guasto = false;
+  const DiagSensore f = leggi_diag_sensore();
+  const int sw1 = g_stat.heat.commutazioni + g_stat.cool.commutazioni;
+  stampa_diag("guasto lontano dalle commutazioni", f);
+  VERIFICA(sw1 == sw0, "relè commutati durante la prova (%d -> %d): premessa non valida", sw0, sw1);
+  VERIFICA(f.scollegato >= e.scollegato + 2, "letture -127 contate: %lu", f.scollegato - e.scollegato);
+  VERIFICA(f.vicino_rele == e.vicino_rele, "letture contate vicino ai relè senza commutazioni: %lu -> %lu",
+           e.vicino_rele, f.vicino_rele);
+
+  // Fase C: guasto abbastanza lungo da far scattare il power-cycle del sensore.
+  g_sensore_guasto = true;
+  avanza(3 * 60 * 1000UL);
+  g_sensore_guasto = false;
+  const DiagSensore g = leggi_diag_sensore();
+  stampa_diag("dopo 3 min di guasto", g);
+  VERIFICA(g.power_cycle >= 1, "power-cycle del sensore non contato: %lu", g.power_cycle);
+  VERIFICA(g.non_valide == g.scollegato + g.poweron_85 + g.fuori_scala + g.picco,
+           "totale %lu diverso dalla somma delle cause", g.non_valide);
+}
+
 // ============================================================
 int main(int argc, char** argv) {
   if (argc < 2) {
@@ -948,6 +1065,7 @@ int main(int argc, char** argv) {
     else if (s == "profilo_pausa_blackout_b") scenario_profilo_pausa_blackout_b();
     else if (s == "profilo_pausa_sensore") scenario_profilo_pausa_sensore();
     else if (s == "stato_json") scenario_stato_json();
+    else if (s == "sensore_diagnostica") scenario_sensore_diagnostica();
     else if (s == "controllo_didattico") scenario_controllo_didattico();
     else if (s == "isteresi_regolabile") scenario_isteresi_regolabile();
     else {

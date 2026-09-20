@@ -98,6 +98,8 @@ manuale.
 
 I test B sono segnaposto (`TestFirmware64`): risultano "non applicabile" finché il firmware installato è
 sotto `fw_min` (6.5.0). Descrizione e criteri sono già scritti; l'implementazione arriva con la 6.5.0.
+Dalla 6.4.1 il firmware pubblica i contatori delle letture del sensore (`esp/state.sensore_diag`, entità
+`sensor.f1_v6_sensore_*`): sono la base del test `salute_sensore`, la cui logica nel motore resta da scrivere.
 
 ### Dettaglio dei test A
 
@@ -203,6 +205,9 @@ stimata martedì 22/09 di notte. Non rilanciati: `comandi`/`lager`/`riavvio` (gi
 firmware, nessuna informazione nuova), `stress_pompa` (vedi sotto), `corrente` (serve una persona).
 
 ### Quali test ripetere dopo il flash della 6.4.0 e l'intervento hardware
+
+> Il firmware che verrà flashato è la **6.4.1** (= 6.4.0 + contatori diagnostici del sensore, nessuna
+> modifica al controllo): la valutazione qui sotto vale anche per lei.
 
 Valutazione del 2026-09-19, test per test. La 6.4.0 cambia *solo* come il profilo avanza nel tempo
 (contatore locale al posto dell'epoch); l'intervento hardware (condensatore su EN, eventuale snubber)

@@ -392,7 +392,7 @@ SCENARI = {
     "modi": lambda: esegui("Modi di controllo in freddo a 10 °C", MODI, T0=10.0),
     "pompa_reset": lambda: esegui("Reset dell'ESP32 al 10 % delle commutazioni della pompa",
                                   ["lager", "stress_pompa"], p_reset_pompa=0.1),
-    "solo_b": lambda: esegui("Solo test della 6.4.0 con firmware 6.3.0", ["stress_rele", "wifi"]),
+    "solo_b": lambda: esegui("Solo test della 6.5.0 con firmware 6.3.0", ["stress_rele", "wifi"]),
 }
 
 if __name__ == "__main__":

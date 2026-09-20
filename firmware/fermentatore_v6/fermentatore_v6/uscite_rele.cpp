@@ -12,6 +12,7 @@ struct StatoRele {
 static StatoRele g_heat = {PIN_RISCALDATORE, false, true, 0, 0};
 static StatoRele g_cool = {PIN_REFRIGERATORE, false, true, 0, 0};
 static uint32_t  g_commutazioni = 0;
+static unsigned long g_ultima_commutazione_ms = 0;
 
 static void scrivi_rele(StatoRele& r, bool acceso, unsigned long now_ms) {
   if (r.acceso == acceso) return;
@@ -25,6 +26,7 @@ static void scrivi_rele(StatoRele& r, bool acceso, unsigned long now_ms) {
   // Relays are ACTIVE LOW.
   digitalWrite(r.pin, acceso ? RELAY_ON : RELAY_OFF);
   g_commutazioni++;
+  g_ultima_commutazione_ms = (now_ms != 0) ? now_ms : 1;  // 0 è riservato a "mai"
 }
 
 // Duty → stato desiderato nella fase corrente della finestra.
@@ -124,4 +126,8 @@ bool uscite_refrigeratore_acceso() {
 
 uint32_t uscite_commutazioni() {
   return g_commutazioni;
+}
+
+unsigned long uscite_ultima_commutazione_ms() {
+  return g_ultima_commutazione_ms;
 }

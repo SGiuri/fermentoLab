@@ -1,5 +1,29 @@
 # Changelog - Fermentatore V6
 
+## [v6.4.1] - 2026-09-20
+### Diagnostica del sensore
+- **Contatori delle letture del DS18B20**, nuovo oggetto `sensore_diag` in `esp/state`. Il firmware scarta
+  in silenzio le letture non valide (NaN, -127, 85 °C, fuori −10…40 °C, picchi alternati) e dichiara il
+  guasto solo dopo il timeout dell'allarme: una sonda che perde qualche lettura, ma non abbastanza da
+  scattare, restava invisibile a HA (verificato il 2026-09-20 sull'analisi del collaudo). Campi, tutti
+  `uint32` dal boot (si azzerano a ogni riavvio): `letture` (conversioni completate), `non_valide`
+  (= `scollegato` + `poweron_85` + `fuori_scala` + `picco`), `vicino_rele` (sottoinsieme delle scartate
+  entro `SENSOR_DIAG_FINESTRA_RELE_MS` = 5 s da una commutazione di un relè), `power_cycle` (cicli di
+  alimentazione del sensore eseguiti).
+- `-127` non distingue CRC, bus vuoto e sensore assente: la libreria DallasTemperature restituisce lo
+  stesso valore. Il contatore `scollegato` li raggruppa.
+- API: `sensor_aggiorna()` prende un terzo parametro opzionale (`ts_ultima_commutazione_ms`, default 0)
+  e `uscite_ultima_commutazione_ms()` espone l'ultima commutazione. Nessun cambiamento nel controllo.
+- `esp/state` non viene più pubblicato se il JSON supera il buffer (come già `esp/controllo`), invece
+  di uscire troncato.
+- Test: nuovo scenario host `sensore_diagnostica` (cause, "vicino ai relè" contro "lontano", power-cycle,
+  totale = somma delle cause) e campi controllati in `stato_json`: 22 scenari, tutti superati. Compilato
+  per ESP32 (1.146.937 byte, 87 % della flash, nessun avviso nel codice dello sketch).
+- La 6.4.0 non è mai stata flashata su F1: la 6.4.1 è la 6.4.0 (timing del profilo) più questa diagnostica.
+  Entità HA `sensor.f1_v6_sensore_*` nel pacchetto `fermentatore_v6_f1_entita.yaml`.
+- Il test di collaudo `salute_sensore` resta un segnaposto: la sua logica nel motore va ancora scritta.
+  Il motore ora richiede la 6.5.0 per i test del gruppo B (era 6.4.0, incoerente con la documentazione).
+
 ## [v6.4.0] - 2026-09-19
 ### Temporizzazione del profilo
 - **Il profilo avanza con un contatore locale, non più con l'orologio di rete.** Fino alla 6.3.0 la

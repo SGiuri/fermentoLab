@@ -473,12 +473,12 @@ views:
       - type: vertical-stack
         cards:
           - type: markdown
-            content: "#### Fase B — firmware 6.4.0, automatici"
+            content: "#### Fase B — firmware 6.5.0, automatici"
           - type: custom:mushroom-template-card
             entity: input_boolean.f1_collaudo_sel_salute_sensore
             primary: "Salute del sensore"
             secondary: >-
-              {{ states('sensor.f1_collaudo_salute_sensore') | capitalize }} · tutto il collaudo · fw 6.4.0
+              {{ states('sensor.f1_collaudo_salute_sensore') | capitalize }} · tutto il collaudo · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_salute_sensore') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -500,7 +500,7 @@ views:
             entity: input_boolean.f1_collaudo_sel_stress_rele
             primary: "Commutazioni rapide e sensore"
             secondary: >-
-              {{ states('sensor.f1_collaudo_stress_rele') | capitalize }} · circa 45 minuti · fw 6.4.0
+              {{ states('sensor.f1_collaudo_stress_rele') | capitalize }} · circa 45 minuti · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_stress_rele') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -522,7 +522,7 @@ views:
             entity: input_boolean.f1_collaudo_sel_sensore_breve
             primary: "Sensore senza alimentazione (1 minuto)"
             secondary: >-
-              {{ states('sensor.f1_collaudo_sensore_breve') | capitalize }} · circa 10 minuti · fw 6.4.0
+              {{ states('sensor.f1_collaudo_sensore_breve') | capitalize }} · circa 10 minuti · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_sensore_breve') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -544,7 +544,7 @@ views:
             entity: input_boolean.f1_collaudo_sel_sensore_lungo
             primary: "Guasto prolungato del sensore"
             secondary: >-
-              {{ states('sensor.f1_collaudo_sensore_lungo') | capitalize }} · circa 20 minuti · fw 6.4.0
+              {{ states('sensor.f1_collaudo_sensore_lungo') | capitalize }} · circa 20 minuti · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_sensore_lungo') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -566,7 +566,7 @@ views:
             entity: input_boolean.f1_collaudo_sel_wifi
             primary: "WiFi assente per 20 minuti"
             secondary: >-
-              {{ states('sensor.f1_collaudo_wifi') | capitalize }} · circa 40 minuti · fw 6.4.0
+              {{ states('sensor.f1_collaudo_wifi') | capitalize }} · circa 40 minuti · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_wifi') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -588,7 +588,7 @@ views:
             entity: input_boolean.f1_collaudo_sel_watchdog
             primary: "Blocco del programma"
             secondary: >-
-              {{ states('sensor.f1_collaudo_watchdog') | capitalize }} · circa 10 minuti · fw 6.4.0
+              {{ states('sensor.f1_collaudo_watchdog') | capitalize }} · circa 10 minuti · fw 6.5.0
             icon: >-
               {% set e = states('sensor.f1_collaudo_watchdog') %}
               {{ {'superato': 'mdi:check-circle', 'avviso': 'mdi:alert-circle', 'fallito': 'mdi:close-circle',
@@ -753,9 +753,9 @@ views:
 
           | Quando | Cosa | Presenza |
           |---|---|---|
-          | Subito | **Fase A** (firmware 6.3.0): comandi, lager 10 °C, riavvio, commutazioni della pompa, diacetile 17 °C, rampa, on/off senza isteresi, P, PI, PID, cold crash 2 °C, allarme freddo | nessuna |
-          | Visita per il flash 6.4.0 | **Mancanza di corrente** (5-10 min) e flash via hotspot | sì, circa 20 minuti |
-          | Dopo il flash | **Fase B** (6.4.0): sensore, relè, WiFi, watchdog — circa 3 ore | nessuna |
+          | Subito | **Fase A** (firmware 6.3.0 o successivo): comandi, lager 10 °C, riavvio, commutazioni della pompa, diacetile 17 °C, rampa, on/off senza isteresi, P, PI, PID, cold crash 2 °C, allarme freddo | nessuna |
+          | Visita per il flash 6.4.1 | **Mancanza di corrente** (5-10 min) e flash via hotspot | sì, circa 20 minuti |
+          | Dopo la 6.5.0 (da scrivere) | **Fase B** (6.5.0): sensore, relè, WiFi, watchdog — circa 3 ore | nessuna |
           | Prima della birra | Verdetto **pronto per la birra** e ritorno in Produzione | — |
 
       - type: entities

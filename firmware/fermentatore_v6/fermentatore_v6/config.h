@@ -2,7 +2,7 @@
 #include "secrets.h"
 
 // Pattern required by project policy: 6.MINOR.PATCH
-#define FIRMWARE_VERSION "6.4.0"
+#define FIRMWARE_VERSION "6.4.1"
 
 #define SCHEMA_VERSION "1.0"
 
@@ -152,6 +152,7 @@
 #define SENSOR_VALID_STREAK_MIN 3           // letture valide consecutive per riprendere il controllo
 #define SENSOR_SPIKE_DELTA_C           7.0f  // soglia ampiezza spike singolo (°C)
 #define SENSOR_OSC_CONSECUTIVE_LIMIT   3     // oscillazioni consecutive per errore
+#define SENSOR_DIAG_FINESTRA_RELE_MS 5000UL  // diagnostica: lettura scartata entro questo tempo da una commutazione = "vicino ai relè"
 #define SENSOR_POWER_CYCLE_TIMEOUT_MS 120000UL
 #define SENSOR_POWER_CYCLE_MAX_ATTEMPTS 3
 #define SENSOR_REBOOT_DELAY_MS 30000UL

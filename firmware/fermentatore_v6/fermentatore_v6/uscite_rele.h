@@ -34,3 +34,5 @@ void uscite_aggiorna(const RichiestaUscite& richiesta,
 bool uscite_riscaldatore_acceso();
 bool uscite_refrigeratore_acceso();
 uint32_t uscite_commutazioni();  // commutazioni relè dal boot (diagnostica usura)
+// millis() dell'ultima commutazione di un relè; 0 = nessuna dal boot. Serve alla diagnostica del sensore.
+unsigned long uscite_ultima_commutazione_ms();

@@ -63,7 +63,7 @@ compile-time `fermenter_id`.
   [`docs/02_HARDWARE_E_TARGET.md`](firmware/fermentatore_v6/docs/02_HARDWARE_E_TARGET.md). This is a
   compile-time choice, not a runtime one.
 - **Host tests**: `powershell -File firmware/fermentatore_v6/tests/host/run_tests.ps1` compiles the real
-  sketch sources against mocks (MSVC Build Tools required) and runs 21 scenarios including 48h
+  sketch sources against mocks (MSVC Build Tools required) and runs 22 scenarios including 48h
   thermal simulations — see [`docs/07_TEST_PLAN.md`](firmware/fermentatore_v6/docs/07_TEST_PLAN.md).
 - **On-hardware collaudo**: for changes that need verifying against real F1 behavior (timing,
   sensor recovery, relay switching, MQTT contract edge cases), use the automated suite described in
@@ -80,7 +80,7 @@ in sync on a version bump: `config.h`, `display.cpp` (OLED splash), `connettivit
 
 > **Caveat**: `firmware/fermentatore_v6/v6_manifest.json` and its `generate_build_info.ps1`/
 > `verify_build_info.ps1` tooling are a *separate*, currently-stale mechanism — the manifest still
-> says `6.1.4` while the real firmware is `6.4.0` in source (the F1 bench unit still runs `6.3.0`), and these scripts never read or write
+> says `6.1.4` while the real firmware is `6.4.1` in source (the F1 bench unit still runs `6.3.0`), and these scripts never read or write
 > `FIRMWARE_VERSION` in `config.h`. Don't rely on `verify_build_info.ps1` passing as a signal that
 > the version is correct. See [`docs/09_TOOLING.md`](firmware/fermentatore_v6/docs/09_TOOLING.md) and
 > [`docs/10_PUNTI_APERTI.md`](firmware/fermentatore_v6/docs/10_PUNTI_APERTI.md).

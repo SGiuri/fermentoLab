@@ -121,7 +121,7 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
   }
 
   char payload[1024];
-  snprintf(payload, sizeof(payload),
+  const int n = snprintf(payload, sizeof(payload),
            "{\"temp_reale\":%s,\"setpoint\":%.2f,"
            "\"control_mode\":\"%s\","
            "\"step_nome\":\"%s\",\"step_index\":%d,"
@@ -135,6 +135,9 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
            "\"sensore_ok\":%s,\"temp_eta_s\":%ld,"
            "\"ntp_sync\":%s,\"uptime_s\":%lu,\"reset_reason\":\"%s\","
            "\"rssi\":%d,\"heap_libero\":%lu,\"commutazioni\":%lu,"
+           "\"sensore_diag\":{\"letture\":%lu,\"non_valide\":%lu,\"scollegato\":%lu,"
+           "\"poweron_85\":%lu,\"fuori_scala\":%lu,\"picco\":%lu,"
+           "\"vicino_rele\":%lu,\"power_cycle\":%lu},"
            "\"firmware\":\"%s\","
            "\"hardware_target\":\"%s\","
            "\"fermenter_id\":\"%s\"}",
@@ -158,9 +161,18 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
            s.rssi,
            (unsigned long)ESP.getFreeHeap(),
            (unsigned long)s.commutazioni,
+           (unsigned long)s.sensore_diag.letture,
+           (unsigned long)s.sensore_diag.non_valide,
+           (unsigned long)s.sensore_diag.scollegato,
+           (unsigned long)s.sensore_diag.poweron_85,
+           (unsigned long)s.sensore_diag.fuori_scala,
+           (unsigned long)s.sensore_diag.picco,
+           (unsigned long)s.sensore_diag.vicino_rele,
+           (unsigned long)s.sensore_diag.power_cycle,
            FIRMWARE_VERSION,
            DEVICE_HARDWARE_TARGET,
            DEVICE_FERMENTER_ID);
+  if (n <= 0 || n >= (int)sizeof(payload)) return;  // mai JSON troncato
   // retain=true: HA riceve lo stato corrente anche dopo riavvio del broker
   _pubblica(TOPIC_STATE, payload, true);
 }

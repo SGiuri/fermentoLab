@@ -199,6 +199,75 @@ mqtt:
       state_class: total_increasing
       entity_category: diagnostic
 
+    # --- Diagnostica del sensore DS18B20 (esp/state.sensore_diag, firmware >= 6.4.1) ---
+    # Contatori dal boot (a ogni riavvio ripartono da zero: total_increasing lo gestisce). Le letture
+    # scartate non arrivano mai a HA; questi contatori sono l'unico modo di vederle. Base del test
+    # di collaudo 'salute_sensore'. Con firmware < 6.4.1 restano sconosciuti.
+    - name: "F1 V6 Sensore Letture"
+      unique_id: f1_v6_sensore_letture
+      icon: mdi:counter
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('letture') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Non Valide"
+      unique_id: f1_v6_sensore_non_valide
+      icon: mdi:thermometer-alert
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('non_valide') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Scollegato"
+      unique_id: f1_v6_sensore_scollegato
+      icon: mdi:thermometer-off
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('scollegato') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Poweron 85"
+      unique_id: f1_v6_sensore_poweron_85
+      icon: mdi:thermometer-alert
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('poweron_85') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Fuori Scala"
+      unique_id: f1_v6_sensore_fuori_scala
+      icon: mdi:thermometer-alert
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('fuori_scala') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Picco"
+      unique_id: f1_v6_sensore_picco
+      icon: mdi:chart-bell-curve
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('picco') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Vicino Rele"
+      unique_id: f1_v6_sensore_vicino_rele
+      icon: mdi:electric-switch
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('vicino_rele') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+    - name: "F1 V6 Sensore Power Cycle"
+      unique_id: f1_v6_sensore_power_cycle
+      icon: mdi:power-cycle
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      value_template: "{{ (value_json.get('sensore_diag') or {}).get('power_cycle') }}"
+      state_class: total_increasing
+      entity_category: diagnostic
+
     # --- Eventi (senza scadenza: restano visibili anche con ESP offline) ---
     - name: "F1 V6 Allarme Tipo"
       unique_id: ferm_v6_f1_allarme_tipo

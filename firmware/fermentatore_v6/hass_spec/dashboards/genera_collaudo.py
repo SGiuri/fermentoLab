@@ -11,7 +11,7 @@ sys.path.insert(0, str(QUI.parent / "appdaemon" / "collaudo_f1"))
 import collaudo_motore as cm  # noqa: E402
 
 GRUPPI = {"A": "Fase A — firmware attuale, automatici",
-          "B": "Fase B — firmware 6.4.0, automatici",
+          "B": "Fase B — firmware 6.5.0, automatici",
           "C": "Manuali — serve la tua presenza"}
 
 ICONA_ESITO = """{% set e = states('sensor.f1_collaudo_ID') %}
@@ -385,9 +385,9 @@ views:
 
           | Quando | Cosa | Presenza |
           |---|---|---|
-          | Subito | **Fase A** (firmware 6.3.0): comandi, lager 10 °C, riavvio, commutazioni della pompa, diacetile 17 °C, rampa, on/off senza isteresi, P, PI, PID, cold crash 2 °C, allarme freddo | nessuna |
-          | Visita per il flash 6.4.0 | **Mancanza di corrente** (5-10 min) e flash via hotspot | sì, circa 20 minuti |
-          | Dopo il flash | **Fase B** (6.4.0): sensore, relè, WiFi, watchdog — circa 3 ore | nessuna |
+          | Subito | **Fase A** (firmware 6.3.0 o successivo): comandi, lager 10 °C, riavvio, commutazioni della pompa, diacetile 17 °C, rampa, on/off senza isteresi, P, PI, PID, cold crash 2 °C, allarme freddo | nessuna |
+          | Visita per il flash 6.4.1 | **Mancanza di corrente** (5-10 min) e flash via hotspot | sì, circa 20 minuti |
+          | Dopo la 6.5.0 (da scrivere) | **Fase B** (6.5.0): sensore, relè, WiFi, watchdog — circa 3 ore | nessuna |
           | Prima della birra | Verdetto **pronto per la birra** e ritorno in Produzione | — |
 
       - type: entities

@@ -235,7 +235,7 @@ def controlli_comuni(met):
 class Test:
     id = ""
     nome = ""
-    gruppo = "A"          # A: firmware attuale, automatico · B: firmware 6.4.0 · C: manuale
+    gruppo = "A"          # A: firmware attuale, automatico · B: firmware 6.5.0 · C: manuale
     fw_min = "6.3.0"
     stima_h = 1.0
     durata = ""
@@ -1090,16 +1090,16 @@ class TestCorrente(Test):
 
 
 class TestFirmware64(Test):
-    """Test che richiedono le funzioni di collaudo del firmware 6.4.0 (in preparazione)."""
+    """Test che richiedono le funzioni di collaudo del firmware 6.5.0 (in preparazione)."""
     gruppo = "B"
-    fw_min = "6.4.0"
+    fw_min = "6.5.0"
 
     def __init__(self, id, nome, stima_h, durata, descrizione, criteri):
         self.id, self.nome, self.stima_h, self.durata = id, nome, stima_h, durata
         self.descrizione, self.criteri = descrizione, criteri
 
     def avvia(self, m):
-        m.esito("non applicabile", note="Test disponibile con il firmware 6.4.0 e il motore di collaudo aggiornato")
+        m.esito("non applicabile", note="Test disponibile con il firmware 6.5.0 e il motore di collaudo aggiornato")
 
 
 class ControlloProduzione(Test):

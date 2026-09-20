@@ -271,6 +271,7 @@ static StatoHeartbeat build_heartbeat() {
   hb.reset_reason = reset_reason_str();
   hb.rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
   hb.commutazioni = uscite_commutazioni();
+  hb.sensore_diag = g_sensore.diag;
   return hb;
 }
 
@@ -425,7 +426,8 @@ static void watchdog_init() {
 // Sensore: letture, fallback, power-cycle, allarme
 // ============================================================
 static void handle_sensor_logic(unsigned long now) {
-  const LetturaSensore esito = sensor_aggiorna(g_sensore, SENSOR_ALARM_TIMEOUT_MINUTES);
+  const LetturaSensore esito = sensor_aggiorna(g_sensore, SENSOR_ALARM_TIMEOUT_MINUTES,
+                                               uscite_ultima_commutazione_ms());
 
   if (esito == LetturaSensore::VALIDA) {
     g_temp = g_sensore.ultima_temp_valida;

@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "controller.h"
 #include "autotune.h"
+#include "sensor_watchdog.h"
 
 // ============================================================
 // Callback comandi MQTT
@@ -36,6 +37,7 @@ struct StatoHeartbeat {
   const char* reset_reason;
   int         rssi;
   uint32_t    commutazioni;
+  SensorDiagnostica sensore_diag;  // letture del DS18B20 dal boot (firmware >= 6.4.1)
 };
 
 // ============================================================
