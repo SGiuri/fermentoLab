@@ -21,7 +21,7 @@ import json
 import os
 import traceback
 
-VERSIONE = "1.2.0"
+VERSIONE = "1.4.0"
 CMD = "fermentazione/v6/f1/ha/cmd/"
 
 E = {
@@ -609,14 +609,19 @@ class TestStressPompa(Test):
     stima_h = 1.2
     durata = "circa 1 ora"
     descrizione = ("Ricrea il guasto storico con il firmware attuale: accende e spegne la pompa del glicole 25 volte "
-                   "spostando il setpoint appena sotto e appena sopra la temperatura (rispettando i tempi minimi "
-                   "dei relè) e conta i riavvii dell'ESP32 e le perdite del sensore dopo ogni commutazione.")
-    criteri = ["Nessun riavvio dell'ESP32", "Sensore sempre utilizzabile", "Almeno 23 cicli completati"]
+                   "(o quante ne chiede l'avvio con cicli_stress) spostando il setpoint appena sotto e appena sopra "
+                   "la temperatura (rispettando i tempi minimi dei relè) e conta i riavvii dell'ESP32 e le perdite "
+                   "del sensore dopo ogni commutazione.")
+    criteri = ["Nessun riavvio dell'ESP32", "Sensore sempre utilizzabile", "Al massimo 2 cicli mancati"]
     CICLI = 25
 
     def avvia(self, m):
-        m.d.update(cicli=0, mancati=0, t_inizio=m.ora())
+        m.d.update(cicli=0, mancati=0, t_inizio=m.ora(),
+                   n_cicli=m.s.get("opzioni", {}).get("cicli_stress", self.CICLI))
         m.vai("accendi")
+
+    def _n(self, m):
+        return m.d.get("n_cicli", self.CICLI)
 
     def _setpoint(self, m, delta):
         T = m.num("temp")
@@ -649,7 +654,7 @@ class TestStressPompa(Test):
                 m.d["mancati"] += 1
                 m.vai("spenta")
         elif f == "spenta" and m.da() >= 65:
-            if m.d["cicli"] + m.d["mancati"] >= self.CICLI:
+            if m.d["cicli"] + m.d["mancati"] >= self._n(m):
                 self.valuta(m)
             else:
                 m.d.pop("rid", None)
@@ -660,8 +665,8 @@ class TestStressPompa(Test):
         riavvii = [r for r in m.s.get("riavvii", []) if r["t"] >= m.d["t_inizio"]]
         c = [controllo("Riavvii dell'ESP32", met["riavvii"] == 0, str(met["riavvii"]), "0"),
              controllo("Sensore non utilizzabile", met["guasto_min"] == 0, fmt(met["guasto_min"], 1, "min"), "0 min"),
-             controllo("Cicli completati", m.d["cicli"] >= self.CICLI - 2, f"{m.d['cicli']} di {self.CICLI}",
-                       f"≥ {self.CICLI - 2}", critico=False)]
+             controllo("Cicli completati", m.d["cicli"] >= self._n(m) - 2, f"{m.d['cicli']} di {self._n(m)}",
+                       f"≥ {self._n(m) - 2}", critico=False)]
         misure = {"Cicli della pompa": str(m.d["cicli"]), "Accensioni registrate in HA": str(met["avvii_freddo"]),
                   "Riavvii": self.descrivi_riavvii(riavvii), "Minuti senza dati": fmt(met["senza_dati_min"], 1)}
         if met["riavvii"]:
@@ -682,7 +687,7 @@ class TestStressPompa(Test):
     def descrivi(self, m):
         n = m.d.get("cicli", 0)
         visti = len([r for r in m.s.get("riavvii", []) if r["t"] >= m.d.get("t_inizio", 0)])
-        return (f"Ciclo {n + 1} di {self.CICLI}: pompa {m.v('freddo')}, {fmt(m.num('temp'), 2)} °C, "
+        return (f"Ciclo {n + 1} di {self._n(m)}: pompa {m.v('freddo')}, {fmt(m.num('temp'), 2)} °C, "
                 f"riavvii finora {visti}")
 
 
@@ -1216,6 +1221,40 @@ CATALOGO = [
                    ["Riavvio entro 75 s con causa task_wdt", "Email 'riavvio anomalo'", "Profilo ripreso"]),
     TestCorrente(),
 ]
+# Ordine di esecuzione: segue la temperatura dell'acqua, non il catalogo. Il serbatoio è lento (su F1 la resistenza
+# da 30-35 W scalda di circa 2 °C/h), quindi ogni test deve partire dove finisce il precedente e si scalda una
+# volta sola, all'inizio; poi si scende:
+#   comandi, riavvio, stress_pompa   indifferenti alla temperatura: subito, così un problema si vede presto
+#   diacetile                        l'unico riscaldamento vero: sale a 17 °C e ci resta 3 h
+#   rampa                            parte già da 17 °C e scende a 10 °C
+#   lager                            10 °C: ci è già
+#   modo_on_off                      tiene la temperatura di partenza (10 °C)
+#   modo_p, modo_pi, modo_pid        ciascuno scende di 1,5 °C da dove finisce il precedente (10 → 8,5 → 7 → 5,5 °C)
+#   cold_crash                       5,5 → 2 °C
+#   allarme_freddo                   parte già da 2 °C: presuppone il cold crash appena fatto
+# I test non elencati (gruppi B e C) seguono, nell'ordine del catalogo.
+ORDINE_ESECUZIONE = ["comandi", "riavvio", "stress_pompa", "diacetile", "rampa", "lager", "modo_on_off", "modo_p",
+                     "modo_pi", "modo_pid", "cold_crash", "allarme_freddo"]
+
+
+def opzioni_avvio(dati):
+    """Opzioni facoltative dell'evento 'avvia' (dal 1.4.0 solo cicli_stress, 1-200); i valori non validi si ignorano."""
+    opzioni = {}
+    try:
+        n = int(dati.get("cicli_stress"))
+        if 1 <= n <= 200:
+            opzioni["cicli_stress"] = n
+    except (TypeError, ValueError):
+        pass
+    return opzioni
+
+
+def ordina_per_esecuzione(ids):
+    """Gli id scelti nell'ordine di ORDINE_ESECUZIONE; quelli non elencati seguono, nell'ordine del catalogo."""
+    pos = {tid: i for i, tid in enumerate(ORDINE_ESECUZIONE)}
+    return sorted((t.id for t in CATALOGO if t.id in ids), key=lambda tid: pos.get(tid, len(pos)))
+
+
 INTERNI = [ControlloProduzione("_preparazione", False), ControlloProduzione("_ripristino", True)]
 
 
@@ -1428,11 +1467,11 @@ class Motore:
             elif self.v("modalita") != "Collaudo":
                 self._avviso("Per avviare i test F1 deve essere in modalità Collaudo.")
             else:
-                scelti = [t.id for t in CATALOGO if t.id in (dati.get("test") or [])]
+                scelti = ordina_per_esecuzione(dati.get("test") or [])
                 if not scelti:
                     self._avviso("Nessun test selezionato.")
                 else:
-                    self._avvia(scelti)
+                    self._avvia(scelti, opzioni_avvio(dati))
         elif azione == "inserisci" and self.s["stato"] == "in corso":
             nuovi = [t.id for t in CATALOGO if t.id in (dati.get("test") or []) and t.id not in self.s["coda"]
                      and t.id != self.s["corrente"]]
@@ -1457,15 +1496,16 @@ class Motore:
         self.salva()
         self.pubblica()
 
-    def _avvia(self, scelti):
+    def _avvia(self, scelti, opzioni=None):
         if self.autoverifica().startswith("ERRORE"):
             self._avviso("Collaudo non avviato: " + self.s["autoverifica"])
             return
         self.s.update(stato="in corso", coda=["_preparazione"] + scelti, corrente=None, sessione_t=self.ora(),
-                      fine_t=0.0, esito_sessione=None, motivo="", scelti=scelti)
+                      fine_t=0.0, esito_sessione=None, motivo="", scelti=scelti, opzioni=opzioni or {})
         for tid in scelti:
             self.s["risultati"][tid] = {"esito": "in coda"}
-        self.evento(f"Collaudo avviato: {', '.join(self.catalogo[t].nome for t in scelti)}")
+        extra = f" (opzioni: {opzioni})" if opzioni else ""
+        self.evento(f"Collaudo avviato: {', '.join(self.catalogo[t].nome for t in scelti)}{extra}")
         self.ctx.servizio("logbook", "log", name="F1 Collaudo", message=f"Collaudo avviato ({len(scelti)} test)")
         self._prossimo()
 

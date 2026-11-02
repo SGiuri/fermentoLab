@@ -336,13 +336,13 @@ class Mondo:
             pass
 
 
-def esegui(nome, test, ore_max=100, riavvio_motore_a=None, **kw):
+def esegui(nome, test, ore_max=100, riavvio_motore_a=None, avvio=None, **kw):
     cartella = tempfile.mkdtemp()
     percorso = str(pathlib.Path(cartella) / "stato.json")
     w = Mondo(**kw)
     w.motore = cm.Motore(w, percorso)
     # email 'offline' come l'automazione HA (3 minuti)
-    w.motore.comando("avvia", {"test": test})
+    w.motore.comando("avvia", dict(avvio or {}, test=test))
     t0 = w.t
     ultimo_tick = 0.0
     offline_da = None
@@ -384,7 +384,17 @@ def esegui(nome, test, ore_max=100, riavvio_motore_a=None, **kw):
 MODI = ["modo_on_off", "modo_p", "modo_pi", "modo_pid"]
 FASE_A = ["comandi", "lager", "riavvio", "stress_pompa", "diacetile", "rampa"] + MODI + ["cold_crash", "allarme_freddo"]
 
+def controlla_ordine():
+    """L'ordine di esecuzione non dipende da quello di scelta: segue ORDINE_ESECUZIONE, poi il catalogo."""
+    assert set(FASE_A) == set(cm.ORDINE_ESECUZIONE), "ORDINE_ESECUZIONE e Fase A devono elencare gli stessi test"
+    altri = [t.id for t in cm.CATALOGO if t.id not in cm.ORDINE_ESECUZIONE]
+    ottenuto = cm.ordina_per_esecuzione(list(reversed(FASE_A + altri)))
+    assert ottenuto == cm.ORDINE_ESECUZIONE + altri, ottenuto
+    print("\n=== Ordine di esecuzione: " + " > ".join(ottenuto[:len(cm.ORDINE_ESECUZIONE)]) + f"  (+ {len(altri)} test dei gruppi B e C in coda)")
+
+
 SCENARI = {
+    "ordine": controlla_ordine,
     "completo": lambda: esegui("Fase A completa + blackout", FASE_A + ["corrente"], blackout=(600, 400)),
     "riavvio_motore": lambda: esegui("Riavvio di AppDaemon a metà", ["lager", "diacetile"], riavvio_motore_a=5.0),
     "freddo_debole": lambda: esegui("Chiller debole", ["cold_crash", "allarme_freddo"], ua_gli=4.0),
@@ -392,6 +402,8 @@ SCENARI = {
     "modi": lambda: esegui("Modi di controllo in freddo a 10 °C", MODI, T0=10.0),
     "pompa_reset": lambda: esegui("Reset dell'ESP32 al 10 % delle commutazioni della pompa",
                                   ["lager", "stress_pompa"], p_reset_pompa=0.1),
+    "stress_50": lambda: esegui("stress_pompa con 50 cicli (cicli_stress)", ["stress_pompa"],
+                                avvio={"cicli_stress": "50"}, p_reset_pompa=0.05),
     "solo_b": lambda: esegui("Solo test della 6.5.0 con firmware 6.3.0", ["stress_rele", "wifi"]),
 }
 
