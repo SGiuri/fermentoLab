@@ -34,6 +34,7 @@ struct DisplayData {
   bool          wifi_offline;           // true = WiFi non connesso
   char          wifi_ssid[33];          // SSID della rete connessa
   unsigned long ts_ingresso_allarme_ms; // millis() ingresso in ALLARME (per countdown)
+  bool          stima_attiva;           // relè guidati dalla regolazione stimata (sensore perso)
 };
 
 void display_init();

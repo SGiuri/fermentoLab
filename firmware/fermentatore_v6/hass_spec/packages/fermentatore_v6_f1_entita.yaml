@@ -1,5 +1,5 @@
 # =============================================================================
-# Pacchetto Home Assistant — Fermentatore V6 F1 — ENTITÀ  (richiede firmware >= 6.2.0)
+# Pacchetto Home Assistant — Fermentatore V6 F1 — ENTITÀ  (richiede firmware >= 6.2.0; stima >= 6.5.0)
 #
 # Ridefinisce le entità MQTT con disponibilità (LWT retained su esp/availability) e scadenza
 # dei valori, aggiunge i sensori diagnostici e gli allarmi offline, sensore guasto e riavvio
@@ -268,6 +268,50 @@ mqtt:
       state_class: total_increasing
       entity_category: diagnostic
 
+    # --- Regolazione stimata con sensore perso (esp/state.stima, firmware >= 6.5.0) ---
+    # Il firmware impara il carico termico (duty dei relè, temperatura media e pendenza) nelle ultime
+    # 2-4 h di controllo normale; se il DS18B20 si perde pilota i relè con quel carico, corretto per il
+    # setpoint corrente. "Duty" = quello che applica (o applicherebbe) adesso. Con firmware < 6.5.0
+    # restano sconosciuti.
+    - name: "F1 V6 Stima Duty Freddo"
+      unique_id: f1_v6_stima_duty_freddo
+      icon: mdi:snowflake-thermometer
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ (value_json.get('stima') or {}).get('freddo') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+    - name: "F1 V6 Stima Duty Caldo"
+      unique_id: f1_v6_stima_duty_caldo
+      icon: mdi:radiator
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ (value_json.get('stima') or {}).get('caldo') }}"
+      unit_of_measurement: "%"
+      state_class: measurement
+    - name: "F1 V6 Stima Ore"
+      unique_id: f1_v6_stima_ore
+      icon: mdi:timer-sand
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ (value_json.get('stima') or {}).get('ore') }}"
+      unit_of_measurement: "h"
+      state_class: measurement
+    - name: "F1 V6 Stima Carico Appreso"
+      unique_id: f1_v6_stima_carico_appreso
+      icon: mdi:chart-timeline-variant
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ (value_json.get('stima') or {}).get('u_freddo') }}"
+      json_attributes_topic: "fermentazione/v6/f1/esp/state"
+      json_attributes_template: "{{ (value_json.get('stima') or {}) | tojson }}"
+      unit_of_measurement: "%"
+      entity_category: diagnostic
+
     # --- Diagnostica dei reset e del loop (esp/diag, firmware >= 6.4.2) ---
     # Topic retained, ripubblicato a ogni heartbeat. I valori "reset" descrivono il reset che ha preceduto
     # l'ULTIMO avvio e cambiano solo a un nuovo riavvio; "loop" riguarda il boot corrente. Come leggerli:
@@ -517,6 +561,26 @@ mqtt:
       value_template: "{{ 'OFF' if value_json.get('sensore_ok', true) else 'ON' }}"
       device_class: problem
 
+    # Firmware >= 6.5.0: relè pilotati dalla stima del carico perché il DS18B20 è perso
+    - name: "F1 V6 Regolazione Stimata"
+      unique_id: f1_v6_regolazione_stimata
+      icon: mdi:crystal-ball
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if (value_json.get('stima') or {}).get('attiva') else 'OFF' }}"
+      device_class: problem
+
+    # Firmware >= 6.5.0: stima del carico disponibile (servono 2 h di controllo normale)
+    - name: "F1 V6 Stima Pronta"
+      unique_id: f1_v6_stima_pronta
+      icon: mdi:check-decagram
+      state_topic: "fermentazione/v6/f1/esp/state"
+      availability_topic: "fermentazione/v6/f1/esp/availability"
+      expire_after: 120
+      value_template: "{{ 'ON' if (value_json.get('stima') or {}).get('pronta') else 'OFF' }}"
+      entity_category: diagnostic
+
 template:
   # Riavvii non comandati: uptime che torna indietro con meno di 90 s tra l'ultimo messaggio e il boot
   # e causa diversa da 'software' (reboot da HA, OTA, recupero del sensore). Un blackout vero dura di più.
@@ -618,8 +682,64 @@ automation:
           title: "[ALLARME] F1 V6 - Sensore DS18B20 non utilizzabile"
           message: >-
             {{ now().strftime('%Y-%m-%d %H:%M') }} — Nessuna lettura valida del DS18B20 da oltre 2 minuti.
-            I relè sono spenti per sicurezza: la birra NON è regolata finché il sensore non torna valido.
+            {% if is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}
+            I relè NON sono spenti: il firmware regola alla cieca col carico appreso (freddo
+            {{ states('sensor.f1_v6_stima_duty_freddo') }} %, caldo {{ states('sensor.f1_v6_stima_duty_caldo') }} %)
+            e la curva prosegue (setpoint {{ states('sensor.f1_v6_setpoint') }} °C). Durata massima 72 h.
+            {% else %}
+            I relè sono spenti per sicurezza: la birra NON è regolata finché il sensore non torna valido
+            (stima del carico non disponibile: servono 2 h di controllo normale, o firmware < 6.5.0).
+            {% endif %}
+            {% if has_value('sensor.f1_temperatura_stimata_ispindel') %}Temperatura stimata dall'iSpindel:
+            {{ states('sensor.f1_temperatura_stimata_ispindel') }} °C.{% else %}iSpindel non disponibile: nessun controllo indipendente.{% endif %}
             Ultima lettura valida {{ states('sensor.f1_v6_eta_lettura') }} s fa.
+
+  - id: v6_f1_pkg_regolazione_stimata
+    alias: "F1 V6 - Regolazione stimata (sensore perso)"
+    description: >-
+      Eventi del firmware >= 6.5.0 su esp/alarm: inizio e fine della regolazione alla cieca, stima non
+      disponibile (relè spenti), durata massima superata (relè spenti).
+    mode: queued
+    triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v6/f1/esp/alarm"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.payload_json.get('tipo') in ['regolazione_stimata', 'fine_regolazione_stimata',
+             'regolazione_stimata_non_disponibile', 'regolazione_stimata_scaduta'] }}
+    actions:
+      - variables:
+          tipo: "{{ trigger.payload_json.tipo }}"
+          titoli:
+            regolazione_stimata: "[ALLARME] F1 V6 - Sensore perso: regolazione stimata attiva"
+            fine_regolazione_stimata: "[INFO] F1 V6 - Sensore tornato: fine regolazione stimata"
+            regolazione_stimata_non_disponibile: "[ALLARME] F1 V6 - Sensore perso senza stima: relè spenti"
+            regolazione_stimata_scaduta: "[ALLARME] F1 V6 - Regolazione stimata oltre 72 h: relè spenti"
+      - action: notify.fermentazione_email
+        data:
+          title: "{{ titoli[tipo] }}"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} —
+            {% if tipo == 'regolazione_stimata' %}
+            Il DS18B20 non risponde: il firmware pilota i relè con il carico appreso nelle ultime ore
+            (freddo {{ states('sensor.f1_v6_stima_duty_freddo') }} %, caldo {{ states('sensor.f1_v6_stima_duty_caldo') }} %
+            del tempo, su finestre di 40 minuti) e la curva prosegue (setpoint {{ states('sensor.f1_v6_setpoint') }} °C).
+            È un controllo ad anello aperto: se la stanza o la fermentazione cambiano, la temperatura deriva.
+            Sorveglianza: iSpindel {% if has_value('sensor.f1_temperatura_stimata_ispindel') %}attivo, temperatura stimata
+            {{ states('sensor.f1_temperatura_stimata_ispindel') }} °C{% else %}NON disponibile{% endif %}.
+            Correzione da remoto: se la birra risulta più calda di X °C, abbassare il setpoint di X °C (e viceversa):
+            la stima ricalcola il duty per tenere la nuova temperatura.
+            {% elif tipo == 'fine_regolazione_stimata' %}
+            Il DS18B20 è tornato valido: controllo normale ripreso. Temperatura {{ states('sensor.f1_v6_temperatura') }} °C,
+            setpoint {{ states('sensor.f1_v6_setpoint') }} °C.
+            {% elif tipo == 'regolazione_stimata_non_disponibile' %}
+            Il DS18B20 non risponde e il firmware non ha ancora una stima del carico (servono 2 h di controllo
+            normale dopo l'avvio): i relè sono spenti e la birra non è regolata.
+            {% else %}
+            La regolazione alla cieca dura da 72 ore: i relè sono stati spenti. Intervento sul posto necessario.
+            {% endif %}
+            Profilo {{ states('sensor.f1_v6_profilo') }}, step {{ states('sensor.f1_v6_step') }}.
 
   - id: v6_f1_pkg_riavvio_spontaneo
     alias: "F1 V6 - Riavvio spontaneo ESP32"

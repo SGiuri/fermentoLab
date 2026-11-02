@@ -41,6 +41,8 @@ inline void configTime(long, int, const char*) {}
 void pinMode(uint8_t pin, uint8_t mode);
 void digitalWrite(uint8_t pin, uint8_t val);
 int  mock_livello_pin(uint8_t pin);
+int  mock_modo_pin(uint8_t pin);
+extern void (*g_mock_hook_delay)(unsigned long ms);  // chiamata a ogni delay(), prima di avanzare il tempo
 
 // ---------------- String ----------------
 class String {

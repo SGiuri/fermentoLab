@@ -4,6 +4,7 @@
 #include "autotune.h"
 #include "sensor_watchdog.h"
 #include "diag_reset.h"
+#include "regolazione_stimata.h"
 
 // ============================================================
 // Callback comandi MQTT
@@ -39,6 +40,7 @@ struct StatoHeartbeat {
   int         rssi;
   uint32_t    commutazioni;
   SensorDiagnostica sensore_diag;  // letture del DS18B20 dal boot (firmware >= 6.4.1)
+  StatoStima  stima;             // regolazione stimata con sensore perso (firmware >= 6.5.0)
 };
 
 // ============================================================

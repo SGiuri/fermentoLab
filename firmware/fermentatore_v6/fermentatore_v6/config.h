@@ -2,7 +2,7 @@
 #include "secrets.h"
 
 // Pattern required by project policy: 6.MINOR.PATCH
-#define FIRMWARE_VERSION "6.4.2"
+#define FIRMWARE_VERSION "6.5.1"
 
 #define SCHEMA_VERSION "1.0"
 
@@ -142,6 +142,7 @@
 // ============================================================
 #define OLED_I2C_ADDR    0x3C
 #define DISPLAY_UPDATE_MS 500UL
+#define DISPLAY_REINIT_MS 60000UL  // re-inizializzazione periodica dell'SSD1306 (>= 6.5.1)
 
 // ============================================================
 // Sensore DS18B20
@@ -155,9 +156,29 @@
 #define SENSOR_OSC_CONSECUTIVE_LIMIT   3     // oscillazioni consecutive per errore
 #define SENSOR_DIAG_FINESTRA_RELE_MS 5000UL  // diagnostica: lettura scartata entro questo tempo da una commutazione = "vicino ai relè"
 #define SENSOR_POWER_CYCLE_TIMEOUT_MS 120000UL
-#define SENSOR_POWER_CYCLE_MAX_ATTEMPTS 3
+#define SENSOR_POWER_CYCLE_MAX_ATTEMPTS 3     // primi tentativi, ogni SENSOR_POWER_CYCLE_TIMEOUT_MS
+#define SENSOR_POWER_CYCLE_RETRY_MS  600000UL // poi un tentativo ogni 10 min, senza limite (>= 6.5.1)
+#define SENSOR_POWER_CYCLE_OFF_MS      3000UL // VDD e DQ a massa per questo tempo (500 ms e solo VDD fino alla 6.5.0)
 #define SENSOR_REBOOT_DELAY_MS 30000UL
 #define SENSOR_REBOOT_MAX      3            // riavvii consecutivi per sensore, poi resta in allarme
+
+// ============================================================
+// Regolazione stimata con sensore perso (regolazione_stimata.cpp, >= 6.5.0)
+// Modello termico di F1 misurato il 24/09 (37,5 L d'acqua): tau 12,5 h, pompa 5-17 °C/h,
+// fascia netta 0,3-0,5 °C/h. R pesano solo sulle correzioni, il duty di base è quello misurato.
+// ============================================================
+#define STIMA_BLOCCO_S          900UL       // blocco di apprendimento (15 min)
+#define STIMA_BLOCCHI_MAX       16          // finestra di apprendimento: 4 h
+#define STIMA_BLOCCHI_MIN       8           // almeno 2 h contigue di controllo normale per una stima
+#define STIMA_TAU_H             12.5f       // costante di tempo verso la stanza [h]
+#define STIMA_R_FREDDO_C_H      10.0f       // raffreddamento con pompa accesa [°C/h]
+#define STIMA_R_CALDO_C_H        0.4f       // riscaldamento netto con fascia accesa [°C/h]
+#define STIMA_DUTY_MAX_PCT      60.0f       // duty massimo applicato alla cieca
+#define STIMA_PENDENZA_MAX_C_H   1.0f       // pendenza appresa oltre questo valore: limitata
+#define STIMA_FINESTRA_MS   2400000UL       // finestra time-proportional (40 min: cicli pompa come nel controllo normale)
+#define STIMA_DURATA_MAX_H      72          // ore cumulative di regolazione stimata, poi relè spenti
+#define STIMA_NVS_INTERVALLO_MS 3600000UL   // salvataggio della stima in NVS (1 h)
+#define STIMA_TICK_MAX_MS       10000UL     // tick più lunghi invalidano il blocco in corso
 
 // PID-family defaults
 #define DEFAULT_KP_HEAT 25.0f

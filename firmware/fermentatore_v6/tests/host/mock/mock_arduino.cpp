@@ -13,7 +13,11 @@ static int64_t g_epoch_base = 0;  // epoch corrispondente a g_mock_ms = 0 (0 = n
 
 unsigned long millis() { return g_mock_ms; }
 
-void delay(unsigned long ms) { g_mock_ms += ms; }
+void (*g_mock_hook_delay)(unsigned long ms) = nullptr;
+void delay(unsigned long ms) {
+  if (g_mock_hook_delay) g_mock_hook_delay(ms);
+  g_mock_ms += ms;
+}
 
 void mock_imposta_epoch(int64_t epoch_adesso) {
   g_epoch_base = epoch_adesso - (int64_t)(g_mock_ms / 1000UL);
@@ -31,7 +35,11 @@ time_t mock_time(time_t* out) {
 
 // ---------------- GPIO ----------------
 static int g_pin[64] = {};
-void pinMode(uint8_t, uint8_t) {}
+static int g_modo[64] = {};
+void pinMode(uint8_t pin, uint8_t mode) {
+  if (pin < 64) g_modo[pin] = mode;
+}
+int mock_modo_pin(uint8_t pin) { return pin < 64 ? g_modo[pin] : -1; }
 void digitalWrite(uint8_t pin, uint8_t val) {
   if (pin < 64) g_pin[pin] = val;
 }

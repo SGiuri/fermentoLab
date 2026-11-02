@@ -120,7 +120,7 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
     strcpy(temp_buf, "null");
   }
 
-  char payload[1024];
+  char payload[1280];
   const int n = snprintf(payload, sizeof(payload),
            "{\"temp_reale\":%s,\"setpoint\":%.2f,"
            "\"control_mode\":\"%s\","
@@ -138,6 +138,8 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
            "\"sensore_diag\":{\"letture\":%lu,\"non_valide\":%lu,\"scollegato\":%lu,"
            "\"poweron_85\":%lu,\"fuori_scala\":%lu,\"picco\":%lu,"
            "\"vicino_rele\":%lu,\"power_cycle\":%lu},"
+           "\"stima\":{\"pronta\":%s,\"attiva\":%s,\"scaduta\":%s,\"freddo\":%.1f,\"caldo\":%.1f,"
+           "\"ore\":%.2f,\"u_freddo\":%.1f,\"u_caldo\":%.1f,\"t_media\":%.2f,\"pendenza\":%.3f,\"blocchi\":%u},"
            "\"firmware\":\"%s\","
            "\"hardware_target\":\"%s\","
            "\"fermenter_id\":\"%s\"}",
@@ -169,6 +171,12 @@ void mqtt_pubblica_stato(const StatoHeartbeat& s) {
            (unsigned long)s.sensore_diag.picco,
            (unsigned long)s.sensore_diag.vicino_rele,
            (unsigned long)s.sensore_diag.power_cycle,
+           s.stima.pronta ? "true" : "false",
+           s.stima.attiva ? "true" : "false",
+           s.stima.scaduta ? "true" : "false",
+           s.stima.duty_freddo_pct, s.stima.duty_caldo_pct, s.stima.ore_attiva,
+           s.stima.u_freddo_pct, s.stima.u_caldo_pct, s.stima.t_media, s.stima.pendenza_c_h,
+           (unsigned)s.stima.blocchi,
            FIRMWARE_VERSION,
            DEVICE_HARDWARE_TARGET,
            DEVICE_FERMENTER_ID);

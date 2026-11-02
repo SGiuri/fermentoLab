@@ -1,0 +1,235 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F1 — SORVEGLIANZA CON L'iSPINDEL
+#
+# L'iSpindel (pacchetto ispindel_01, sensor.ispindel_01_temperatura) galleggia in F1 e ha un proprio
+# sensore di temperatura: è la sola misura indipendente dal DS18B20. Serve quando la regolazione del
+# firmware non è verificabile:
+#   - DS18B20 perso (il firmware >= 6.5.0 regola alla cieca col carico appreso, vedi
+#     regolazione_stimata.h);
+#   - ESP32 offline (il firmware regola, ma HA non vede nulla).
+#
+# L'iSpindel legge più caldo del DS18B20 (stratificazione e taratura: +2,6..2,8 °C a fine settembre
+# 2026 con setpoint 12 °C), quindi non si confronta il valore grezzo col setpoint: lo scarto
+# iSpindel - DS18B20 viene appreso di continuo mentre il DS18B20 è valido (media esponenziale con
+# costante di 3 h) e congelato quando non lo è. Temperatura stimata = iSpindel - scarto.
+#
+# Allarmi (email, non in modalità Didattica):
+#   - fuori banda: sorveglianza necessaria e |stimata - setpoint| oltre soglia per N minuti; ripetuto
+#     ogni 6 h finché resta fuori, poi un'email di rientro;
+#   - iSpindel muto: sorveglianza necessaria e nessuna lettura per 3 intervalli (almeno 20 min).
+#
+# Tutto vale solo con input_boolean.f1_ispindel_presente acceso (l'iSpindel galleggia nella birra di F1).
+# Dal 2026-10-17 è spento: l'iSpindel resta nella lager passata in F2 (Inkbird, vedi pacchetto
+# fermentatore_v6_f2_cotta e dashboard F2 Cotta) e F1 regola la cotta nuova senza iSpindel. Spento, lo
+# scarto non impara e la sorveglianza non scatta mai, quindi niente email confrontando un'altra birra col
+# setpoint di F1. Va riacceso solo quando un iSpindel (ispindel_01) torna nella birra di F1.
+#
+# Solo F1: genera_f2.py salta questo file.
+# =============================================================================
+
+input_boolean:
+  # Niente initial: HA ripristina l'ultimo valore dopo un riavvio; al primo caricamento è spento.
+  f1_ispindel_presente:
+    name: "F1 iSpindel nel fermentatore"
+    icon: mdi:beer
+
+input_number:
+  f1_ispindel_soglia:
+    name: "F1 iSpindel Soglia Scostamento"
+    min: 0.5
+    max: 5
+    step: 0.1
+    initial: 1.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-alert
+  f1_ispindel_minuti:
+    name: "F1 iSpindel Minuti Scostamento"
+    min: 15
+    max: 240
+    step: 15
+    initial: 60
+    unit_of_measurement: "min"
+    icon: mdi:timer-alert
+
+template:
+  # Scarto iSpindel - DS18B20, appreso solo mentre il DS18B20 regola davvero.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.ispindel_01_temperatura
+    sensor:
+      - name: "F1 iSpindel Scarto"
+        unique_id: f1_ispindel_scarto
+        icon: mdi:delta
+        unit_of_measurement: "°C"
+        state_class: measurement
+        state: >-
+          {% set prec = this.state | float(none) %}
+          {% set isp = states('sensor.ispindel_01_temperatura') | float(none) %}
+          {% set ds = states('sensor.f1_v6_temperatura') | float(none) %}
+          {% set ds_ok = is_state('input_boolean.f1_ispindel_presente', 'on')
+                         and is_state('binary_sensor.f1_v6_online', 'on')
+                         and is_state('binary_sensor.f1_v6_sensore_guasto', 'off')
+                         and not is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}
+          {% if isp is none or ds is none or not ds_ok %}
+            {{ prec }}
+          {% elif prec is none %}
+            {{ (isp - ds) | round(3) }}
+          {% else %}
+            {% set dt = now().timestamp() - (this.attributes.get('ts') | float(now().timestamp())) %}
+            {% set a = 1 - e ** (-([dt, 0] | max) / 10800) %}
+            {{ (prec + a * ((isp - ds) - prec)) | round(3) }}
+          {% endif %}
+        attributes:
+          ts: >-
+            {% set ds_ok = is_state('input_boolean.f1_ispindel_presente', 'on')
+                           and is_state('binary_sensor.f1_v6_online', 'on')
+                           and is_state('binary_sensor.f1_v6_sensore_guasto', 'off')
+                           and not is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}
+            {% if ds_ok and has_value('sensor.ispindel_01_temperatura') and has_value('sensor.f1_v6_temperatura') %}
+              {{ now().timestamp() | round(0) }}
+            {% else %}
+              {{ this.attributes.get('ts') }}
+            {% endif %}
+          congelato: >-
+            {{ not (is_state('input_boolean.f1_ispindel_presente', 'on')
+                    and is_state('binary_sensor.f1_v6_online', 'on')
+                    and is_state('binary_sensor.f1_v6_sensore_guasto', 'off')
+                    and not is_state('binary_sensor.f1_v6_regolazione_stimata', 'on')) }}
+
+  # Ultimo setpoint noto: resta valido anche con l'ESP32 offline.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.f1_v6_setpoint
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: "F1 Setpoint Riferimento"
+        unique_id: f1_setpoint_riferimento
+        icon: mdi:target
+        unit_of_measurement: "°C"
+        state: "{{ states('sensor.f1_v6_setpoint') | float(this.state | float(none)) }}"
+
+  - sensor:
+      - name: "F1 Temperatura Stimata iSpindel"
+        unique_id: f1_temperatura_stimata_ispindel
+        icon: mdi:thermometer-water
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        # Senza l'iSpindel nella birra di F1 non è una stima di F1: non disponibile (anche nelle email di entita).
+        availability: >-
+          {{ is_state('input_boolean.f1_ispindel_presente', 'on')
+             and has_value('sensor.ispindel_01_temperatura') and has_value('sensor.f1_ispindel_scarto') }}
+        state: >-
+          {{ ((states('sensor.ispindel_01_temperatura') | float) - (states('sensor.f1_ispindel_scarto') | float)) | round(2) }}
+
+    binary_sensor:
+      # Il DS18B20 non sta regolando in modo verificabile: serve l'iSpindel, se è nella birra di F1.
+      - name: "F1 Sorveglianza iSpindel Necessaria"
+        unique_id: f1_sorveglianza_ispindel
+        icon: mdi:eye-check
+        state: >-
+          {{ is_state('input_boolean.f1_ispindel_presente', 'on')
+             and (is_state('binary_sensor.f1_v6_regolazione_stimata', 'on')
+                  or is_state('binary_sensor.f1_v6_sensore_guasto', 'on')
+                  or is_state('binary_sensor.f1_v6_online', 'off')) }}
+
+      - name: "F1 iSpindel Fuori Banda"
+        unique_id: f1_ispindel_fuori_banda
+        device_class: problem
+        state: >-
+          {% set t = states('sensor.f1_temperatura_stimata_ispindel') | float(none) %}
+          {% set sp = states('sensor.f1_setpoint_riferimento') | float(none) %}
+          {{ is_state('binary_sensor.f1_sorveglianza_ispindel_necessaria', 'on')
+             and t is not none and sp is not none
+             and (t - sp) | abs > states('input_number.f1_ispindel_soglia') | float(1.5) }}
+
+      - name: "F1 iSpindel Muto"
+        unique_id: f1_ispindel_muto
+        device_class: problem
+        state: >-
+          {% set s = states.sensor.ispindel_01_temperatura %}
+          {% set intervallo = states('sensor.ispindel_01_intervallo') | float(900) %}
+          {% set limite = [3 * intervallo, 1200] | max %}
+          {{ is_state('binary_sensor.f1_sorveglianza_ispindel_necessaria', 'on')
+             and (s is none or s.state in ['unavailable', 'unknown']
+                  or (now() - s.last_reported).total_seconds() > limite) }}
+
+automation:
+  - id: f1_ispindel_fuori_banda
+    alias: "F1 iSpindel - Temperatura stimata fuori banda"
+    description: >-
+      Con DS18B20 perso o ESP32 offline, la temperatura stimata dall'iSpindel si scosta dal setpoint oltre
+      soglia per il tempo impostato. Email subito e ogni 6 h finché resta fuori, poi email di rientro.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.f1_ispindel_fuori_banda
+        to: "on"
+        for:
+          minutes: "{{ states('input_number.f1_ispindel_minuti') | int(60) }}"
+    conditions:
+      - condition: template
+        value_template: "{{ not is_state('input_select.f1_v6_modalita', 'Didattica') }}"
+    actions:
+      - repeat:
+          sequence:
+            - variables:
+                t: "{{ states('sensor.f1_temperatura_stimata_ispindel') | float(0) }}"
+                sp: "{{ states('sensor.f1_setpoint_riferimento') | float(0) }}"
+            - action: notify.fermentazione_email
+              data:
+                title: "[ALLARME] F1 - iSpindel: birra a {{ t | round(1) }} °C, setpoint {{ sp | round(1) }} °C"
+                message: >-
+                  {{ now().strftime('%Y-%m-%d %H:%M') }} — Temperatura stimata dall'iSpindel {{ t | round(2) }} °C
+                  (lettura grezza {{ states('sensor.ispindel_01_temperatura') }} °C, scarto appreso
+                  {{ states('sensor.f1_ispindel_scarto') }} °C), setpoint {{ sp | round(2) }} °C:
+                  scostamento {{ (t - sp) | round(2) }} °C da oltre {{ states('input_number.f1_ispindel_minuti') | int(60) }} minuti.
+                  Stato F1: {% if is_state('binary_sensor.f1_v6_online', 'off') %}ESP32 OFFLINE{% elif is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}regolazione stimata da
+                  {{ states('sensor.f1_v6_stima_ore') }} h (freddo {{ states('sensor.f1_v6_stima_duty_freddo') }} %,
+                  caldo {{ states('sensor.f1_v6_stima_duty_caldo') }} %){% else %}sensore DS18B20 guasto, relè spenti{% endif %}.
+                  {% if is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}
+                  Correzione da remoto: impostare il setpoint a {{ (sp - (t - sp)) | round(1) }} °C
+                  (setpoint attuale meno lo scostamento): la stima ricalcola il duty per tenere 1 °C in meno per ogni grado.
+                  {% endif %}
+                  Lo scarto iSpindel/DS18B20 è stimato: con stratificazione forte l'errore può essere di 1 °C.
+            - wait_for_trigger:
+                - trigger: state
+                  entity_id: binary_sensor.f1_ispindel_fuori_banda
+                  to: "off"
+              timeout:
+                hours: 6
+          until: "{{ wait.trigger is not none }}"
+      - action: notify.fermentazione_email
+        data:
+          title: "[INFO] F1 - iSpindel: temperatura stimata rientrata"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — Temperatura stimata {{ states('sensor.f1_temperatura_stimata_ispindel') }} °C,
+            setpoint {{ states('sensor.f1_setpoint_riferimento') }} °C
+            {%- if is_state('binary_sensor.f1_sorveglianza_ispindel_necessaria', 'off') %} (DS18B20 di nuovo valido){% endif %}.
+
+  - id: f1_ispindel_muto
+    alias: "F1 iSpindel - Nessuna lettura durante la sorveglianza"
+    description: "Con DS18B20 perso o ESP32 offline l'iSpindel è l'unica misura: avvisa se tace."
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.f1_ispindel_muto
+        to: "on"
+        for:
+          minutes: 5
+    conditions:
+      - condition: template
+        value_template: "{{ not is_state('input_select.f1_v6_modalita', 'Didattica') }}"
+    actions:
+      - action: notify.fermentazione_email
+        data:
+          title: "[ATTENZIONE] F1 - iSpindel muto: nessuna sorveglianza della temperatura"
+          message: >-
+            {{ now().strftime('%Y-%m-%d %H:%M') }} — Il DS18B20 non è utilizzabile (o l'ESP32 è offline) e l'iSpindel
+            non invia letture da oltre 3 intervalli (ultimo stato {{ states('sensor.ispindel_01_temperatura') }},
+            batteria {{ states('sensor.ispindel_01_batteria') }} V). La temperatura della birra non è osservabile.
+            {% if is_state('binary_sensor.f1_v6_regolazione_stimata', 'on') %}Il firmware continua la regolazione stimata
+            ({{ states('sensor.f1_v6_stima_ore') }} h su 72).{% endif %}

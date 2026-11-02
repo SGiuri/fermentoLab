@@ -14,6 +14,7 @@
 #include "display.h"
 #include "uscite_rele.h"
 #include "diag_reset.h"
+#include "regolazione_stimata.h"
 #include <esp_rom_sys.h>
 #include <soc/rtc.h>
 
@@ -58,6 +59,16 @@ struct Impianto {
 static Impianto g_imp;
 static bool g_modello_termico = false;
 static bool g_sensore_guasto = false;
+// DS18B20 "bloccato" (01/10/2026 su F1): legge -127 finché VDD e DQ non vanno a massa insieme per
+// almeno 1 s. Con il solo VDD a massa resta alimentato in parassita dalla linea dati.
+static bool g_sensore_bloccato = false;
+static void hook_delay_sensore_bloccato(unsigned long ms) {
+  if (g_sensore_bloccato && ms >= 1000 &&
+      mock_livello_pin(PIN_SENSOR_PWR) == LOW &&
+      mock_modo_pin(PIN_DS18B20) == OUTPUT && mock_livello_pin(PIN_DS18B20) == LOW) {
+    g_sensore_bloccato = false;
+  }
+}
 
 static bool rele_heat() { return mock_livello_pin(PIN_RISCALDATORE) == RELAY_ON; }
 static bool rele_cool() { return mock_livello_pin(PIN_REFRIGERATORE) == RELAY_ON; }
@@ -128,7 +139,7 @@ static void avanza(unsigned long durata_ms, unsigned long passo_ms = 250) {
       if (rele_cool()) dT -= g_imp.raffreddo_c_h * h;
       g_imp.temp += dT;
     }
-    if (g_sensore_guasto) {
+    if (g_sensore_guasto || g_sensore_bloccato) {
       g_mock_ds_temp = (float)DEVICE_DISCONNECTED_C;
     } else if (g_modello_termico) {
       g_mock_ds_temp = (float)quantizza(g_imp.temp);
@@ -193,7 +204,7 @@ static int conta_ack(const std::string& request_id) {
 }
 
 static DynamicJsonDocument ultimo_stato() {
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(4096);  // esp/state ~1 KB, stringhe copiate
   for (auto it = g_mock_pubblicazioni.rbegin(); it != g_mock_pubblicazioni.rend(); ++it) {
     if (it->topic == TOPIC_STATE) {
       const DeserializationError err = deserializeJson(doc, it->payload);
@@ -362,6 +373,8 @@ static void scenario_sensore_guasto() {
   VERIFICA(ritardo <= SENSOR_MAX_ETA_MS + SENSOR_READ_INTERVAL_MS, "spegnimento troppo lento: %lu ms", ritardo);
   VERIFICA(!riacceso_dopo_spegnimento, "relè riaccesi con sensore guasto");
   VERIFICA(allarme_pubblicato("sensore_instabile"), "allarme sensore_instabile non pubblicato");
+  VERIFICA(allarme_pubblicato("regolazione_stimata_non_disponibile"), "guasto senza stima del carico non segnalato");
+  VERIFICA(!allarme_pubblicato("regolazione_stimata"), "regolazione stimata partita senza apprendimento");
   VERIFICA(allarme_pubblicato("sensore_offline"), "allarme sensore_offline non pubblicato");
   VERIFICA(allarme_pubblicato("riavvio_in_corso"), "allarme riavvio_in_corso non pubblicato");
   VERIFICA(riavviato, "riavvio controllato non avvenuto");
@@ -727,9 +740,10 @@ static void simulazione_48h(const char* modo, const std::string& params = "{}", 
   VERIFICA(g_stat.heat.violazioni_min_off + g_stat.cool.violazioni_min_off == 0, "violazioni tempo minimo OFF");
   const double max_h = (std::string(modo).rfind("on_off", 0) == 0) ? 4.0 : 13.0;
   VERIFICA(commutazioni / 48.0 <= max_h, "troppe commutazioni: %.1f/h (max %.0f)", commutazioni / 48.0, max_h);
-  // 2 chiavi (ore_save, progresso_s) ogni NVS_SAVE_INTERVAL_MS: 288 voci/giorno.
+  // 2 chiavi (ore_save, progresso_s) ogni NVS_SAVE_INTERVAL_MS: 288 voci/giorno, più la stima del
+  // carico ogni STIMA_NVS_INTERVALLO_MS (24/giorno, >= 6.5.0).
   // Il firmware 6.1.19 riscriveva ogni 60 s il blob profilo intero (~1.3 KB).
-  VERIFICA(g_mock_nvs_scritture - scritture_nvs <= 48 * 6 * 2 + 10, "troppe scritture NVS: %d", g_mock_nvs_scritture - scritture_nvs);
+  VERIFICA(g_mock_nvs_scritture - scritture_nvs <= 48 * 6 * 2 + 48 + 10, "troppe scritture NVS: %d", g_mock_nvs_scritture - scritture_nvs);
 }
 
 // WiFi assente per 2 ore: il controllo continua, poi riconnessione automatica.
@@ -927,8 +941,11 @@ static void scenario_stato_json() {
   for (const char* k : {"letture", "non_valide", "scollegato", "poweron_85", "fuori_scala", "picco", "vicino_rele", "power_cycle"}) {
     VERIFICA(st["sensore_diag"].containsKey(k), "campo sensore_diag.%s mancante in esp/state", k);
   }
+  for (const char* k : {"pronta", "attiva", "scaduta", "freddo", "caldo", "ore", "u_freddo", "u_caldo", "t_media", "pendenza", "blocchi"}) {
+    VERIFICA(st["stima"].containsKey(k), "campo stima.%s mancante in esp/state", k);
+  }
   for (const auto& p : g_mock_pubblicazioni) {
-    if (p.topic == TOPIC_STATE) VERIFICA(p.payload.size() < 900, "payload esp/state di %u byte: troppo vicino al buffer di 1024", (unsigned)p.payload.size());
+    if (p.topic == TOPIC_STATE) VERIFICA(p.payload.size() < 1150, "payload esp/state di %u byte: troppo vicino al buffer di 1280", (unsigned)p.payload.size());
   }
 }
 
@@ -1126,6 +1143,218 @@ static void scenario_sensore_diagnostica() {
 }
 
 // ============================================================
+// ============================================================
+// Regolazione stimata (>= 6.5.0)
+// ============================================================
+
+// Avanza riavviando il firmware quando chiama ESP.restart() (riavvio software: memoria RTC conservata).
+// Le variabili statiche "normali" del firmware nei test sopravvivono al riavvio: regolazione_stimata
+// le azzera da sé in stima_init(), come succede sul chip.
+static int g_riavvii_simulati = 0;
+static void avanza_con_riavvii(unsigned long durata_ms, unsigned long passo_ms = 1000) {
+  const unsigned long fine = g_mock_ms + durata_ms;
+  while (g_mock_ms < fine) {
+    try {
+      avanza(fine - g_mock_ms < passo_ms ? fine - g_mock_ms : passo_ms, passo_ms);
+    } catch (const RiavvioSimulato&) {
+      g_riavvii_simulati++;
+      g_mock_reset_reason = ESP_RST_SW;
+      WiFi.stato = WL_DISCONNECTED;
+      setup();
+    }
+  }
+}
+
+// Formula del duty stimato: stesso setpoint -> duty misurato; setpoint più basso -> più freddo;
+// carico negativo -> riscaldatore; limiti.
+static void scenario_stima_calcolo() {
+  float df = -1.0f, dc = -1.0f;
+  stima_calcola_duty(0.08f, 0.0f, 19.0f, 0.0f, 19.0f, &df, &dc);
+  VERIFICA(std::fabs(df - 8.0f) < 0.01f && dc == 0.0f, "stesso setpoint: freddo %.2f caldo %.2f (atteso 8/0)", df, dc);
+  stima_calcola_duty(0.08f, 0.0f, 19.0f, 0.0f, 18.0f, &df, &dc);
+  const float atteso = 8.0f + 100.0f / (STIMA_TAU_H * STIMA_R_FREDDO_C_H);
+  VERIFICA(std::fabs(df - atteso) < 0.01f, "setpoint -1 °C: freddo %.2f (atteso %.2f)", df, atteso);
+  // In salita a 0,1 °C/h con l'8% di freddo: il carico era maggiore, serve più freddo per stare fermi
+  stima_calcola_duty(0.08f, 0.0f, 19.0f, 0.1f, 19.0f, &df, &dc);
+  VERIFICA(std::fabs(df - (8.0f + 100.0f * 0.1f / STIMA_R_FREDDO_C_H)) < 0.01f, "pendenza +0,1: freddo %.2f", df);
+  // Setpoint sopra la temperatura appresa con carico già di riscaldamento: niente freddo, riscaldatore
+  stima_calcola_duty(0.0f, 0.10f, 19.0f, 0.0f, 20.0f, &df, &dc);
+  VERIFICA(df == 0.0f && dc > 10.0f, "carico negativo: freddo %.2f caldo %.2f", df, dc);
+  stima_calcola_duty(0.9f, 0.0f, 19.0f, 0.0f, 10.0f, &df, &dc);
+  VERIFICA(df == STIMA_DUTY_MAX_PCT, "limite duty freddo: %.2f", df);
+  stima_calcola_duty(NAN, 0.0f, 19.0f, 0.0f, 19.0f, &df, &dc);
+  VERIFICA(df == 0.0f && dc == 0.0f, "NaN: freddo %.2f caldo %.2f", df, dc);
+}
+
+// Il sensore si guasta dopo 6 h di controllo normale e non torna per 50 h (un weekend): i relè
+// continuano col carico appreso, la temperatura resta vicina al setpoint, il profilo avanza, i
+// riavvii automatici per allarme sensore non fanno perdere la stima. Poi oltre STIMA_DURATA_MAX_H
+// i relè si spengono; al ritorno del sensore riprende il controllo normale.
+static void scenario_stima_weekend() {
+  g_modello_termico = true;
+  g_imp.ambiente = 24.0;
+  g_imp.temp = 21.0;
+  avvia_firmware();
+  avvia_profilo_costante(19.0f);
+  avanza(6 * 3600 * 1000UL, 500);
+  auto st = ultimo_stato();
+  VERIFICA((bool)(st["stima"]["pronta"] | false), "stima non pronta dopo 6 h di controllo");
+  const float u_appreso = st["stima"]["u_freddo"] | 0.0f;
+  const float carico_vero = 100.0f * (float)((g_imp.ambiente - 19.0) * g_imp.k_amb_h / g_imp.raffreddo_c_h);
+  printf("  appreso: freddo %.1f%% (carico vero %.1f%%), T media %.2f, pendenza %.3f, blocchi %d\n",
+         u_appreso, carico_vero, (float)(st["stima"]["t_media"] | 0.0f), (float)(st["stima"]["pendenza"] | 0.0f),
+         (int)(st["stima"]["blocchi"] | 0));
+  VERIFICA(std::fabs(u_appreso - carico_vero) < 2.5f, "duty appreso %.1f%%, carico vero %.1f%%", u_appreso, carico_vero);
+  const float ore_prima = st["ore_totali"] | 0.0f;
+
+  // --- 50 h senza sensore ---
+  g_sensore_guasto = true;
+  const unsigned long t_guasto = g_mock_ms;
+  g_stat = Statistiche{};
+  avanza_con_riavvii(30 * 60 * 1000UL);  // tempo per perdita, power-cycle, allarme e riavvii
+  g_stat.registra_temp = true;
+  avanza_con_riavvii(50 * 3600 * 1000UL - 30 * 60 * 1000UL);
+  st = ultimo_stato();
+  const double on_freddo = 100.0 * g_stat.cool.ms_acceso / (50.0 * 3600000.0);
+  printf("  50 h alla cieca: T min %.2f max %.2f, freddo on %.1f%%, commutazioni %d, riavvii %d\n",
+         g_stat.temp_min, g_stat.temp_max, on_freddo, g_stat.heat.commutazioni + g_stat.cool.commutazioni,
+         g_riavvii_simulati);
+  VERIFICA(allarme_pubblicato("regolazione_stimata"), "allarme regolazione_stimata non pubblicato");
+  VERIFICA((bool)(st["stima"]["attiva"] | false), "regolazione stimata non attiva dopo 50 h di guasto");
+  VERIFICA(!(bool)(st["sensore_ok"] | true), "sensore_ok true con sensore guasto");
+  VERIFICA(g_stat.temp_min >= 17.5 && g_stat.temp_max <= 20.5, "temperatura alla cieca %.2f..%.2f (setpoint 19)",
+           g_stat.temp_min, g_stat.temp_max);
+  VERIFICA(g_stat.simultanei == 0, "caldo e freddo accesi insieme %d volte", g_stat.simultanei);
+  VERIFICA(g_stat.cool.violazioni_min_off == 0 && g_stat.heat.violazioni_min_off == 0, "violazioni tempo minimo OFF");
+  VERIFICA(g_stat.cool.commutazioni / 50.0 <= 4.0, "troppe commutazioni del freddo: %.1f/h", g_stat.cool.commutazioni / 50.0);
+  VERIFICA(g_riavvii_simulati == SENSOR_REBOOT_MAX, "riavvii per allarme sensore: %d (attesi %d)", g_riavvii_simulati, SENSOR_REBOOT_MAX);
+  VERIFICA(allarme_pubblicato("riavvio_sospeso"), "riavvio_sospeso non pubblicato");
+  const float ore_stima = st["stima"]["ore"] | 0.0f;
+  VERIFICA(ore_stima > 49.0f && ore_stima <= 50.0f, "ore di regolazione stimata %.2f (attese ~50, anche attraverso i riavvii)", ore_stima);
+  const float avanzamento = (float)(st["ore_totali"] | 0.0f) - ore_prima;
+  VERIFICA(avanzamento > 49.0f, "il profilo è avanzato di %.1f h in 50 h di regolazione stimata", avanzamento);
+
+  // --- Oltre la durata massima: relè spenti ---
+  g_stat.registra_temp = false;
+  avanza_con_riavvii((STIMA_DURATA_MAX_H - 50) * 3600 * 1000UL + 10 * 60 * 1000UL);
+  st = ultimo_stato();
+  VERIFICA((bool)(st["stima"]["scaduta"] | false) && !(bool)(st["stima"]["attiva"] | true), "stima non scaduta dopo %u h", (unsigned)STIMA_DURATA_MAX_H);
+  VERIFICA(allarme_pubblicato("regolazione_stimata_scaduta"), "allarme regolazione_stimata_scaduta non pubblicato");
+  avanza_con_riavvii(5 * 60 * 1000UL);
+  VERIFICA(!rele_cool() && !rele_heat(), "relè accesi dopo la scadenza della regolazione stimata");
+
+  // --- Il sensore torna: controllo normale, conteggio azzerato ---
+  g_sensore_guasto = false;
+  avanza_con_riavvii(10 * 60 * 1000UL);
+  st = ultimo_stato();
+  VERIFICA((bool)(st["sensore_ok"] | false), "sensore non tornato utilizzabile");
+  VERIFICA(!(bool)(st["stima"]["attiva"] | true) && !(bool)(st["stima"]["scaduta"] | true), "stima ancora attiva/scaduta dopo il recupero");
+  VERIFICA((float)(st["stima"]["ore"] | 1.0f) == 0.0f, "ore di regolazione stimata non azzerate: %.2f", (float)(st["stima"]["ore"] | 1.0f));
+  printf("  guasto dal %lu s, fine %lu s\n", t_guasto / 1000UL, g_mock_ms / 1000UL);
+}
+
+// La stima sopravvive a un blackout (NVS): il sensore è guasto già all'accensione.
+static const char* FILE_NVS_STIMA = "nvs_stima.bin";
+static void scenario_stima_blackout_a() {
+  g_modello_termico = true;
+  g_imp.ambiente = 24.0;
+  g_imp.temp = 19.5;
+  avvia_firmware();
+  avvia_profilo_costante(19.0f);
+  avanza(4 * 3600 * 1000UL, 500);
+  VERIFICA((bool)(ultimo_stato()["stima"]["pronta"] | false), "stima non pronta dopo 4 h");
+  mock_nvs_salva_su_file(FILE_NVS_STIMA);
+}
+static void scenario_stima_blackout_b() {
+  mock_nvs_carica_da_file(FILE_NVS_STIMA);
+  g_mock_reset_reason = ESP_RST_POWERON;
+  g_mock_ms = 0;
+  g_modello_termico = true;
+  g_imp.ambiente = 24.0;
+  g_imp.temp = 19.0;
+  g_sensore_guasto = true;
+  avvia_firmware();
+  avanza_con_riavvii(3 * 3600 * 1000UL);
+  const auto st = ultimo_stato();
+  VERIFICA((bool)(st["stima"]["pronta"] | false), "stima non ripristinata dalla NVS");
+  VERIFICA((bool)(st["stima"]["attiva"] | false), "regolazione stimata non attiva con sensore guasto all'accensione");
+  VERIFICA(g_stat.cool.ms_acceso > 0, "refrigeratore mai acceso in 3 h di regolazione stimata");
+  VERIFICA(g_imp.temp > 18.0 && g_imp.temp < 20.0, "temperatura dopo 3 h alla cieca: %.2f", g_imp.temp);
+  remove(FILE_NVS_STIMA);
+}
+
+// ============================================================
+// Recupero del sensore (>= 6.5.1)
+// ============================================================
+
+static int conta_ack_power_cycle(size_t da = 0) {
+  int n = 0;
+  for (size_t i = da; i < g_mock_pubblicazioni.size(); i++) {
+    const auto& p = g_mock_pubblicazioni[i];
+    if (p.topic == TOPIC_ACK && p.payload.find("sensor_power_cycle") != std::string::npos) n++;
+  }
+  return n;
+}
+
+// Sensore bloccato come su F1 il 01/10/2026: il power-cycle deve mettere a massa anche DQ.
+// Fino alla 6.5.0 (solo VDD a massa per 500 ms) il sensore restava perso finché qualcuno non spegneva la scheda.
+static void scenario_sensore_bloccato() {
+  g_modello_termico = true;
+  g_imp.temp = 17.0;
+  g_imp.ambiente = 15.0;
+  g_mock_hook_delay = hook_delay_sensore_bloccato;
+  avvia_firmware();
+  avvia_profilo_costante(20.0f);
+  avanza(5 * 60 * 1000UL);
+
+  g_sensore_bloccato = true;
+  const unsigned long t_guasto = g_mock_ms;
+  while (g_sensore_bloccato && g_mock_ms - t_guasto < 30 * 60 * 1000UL) avanza_con_riavvii(1000);
+  const unsigned long t_sblocco = g_mock_ms;
+  avanza_con_riavvii(2 * 60 * 1000UL);
+  printf("  sensore sbloccato dopo %lu s, riavvii %d\n", (t_sblocco - t_guasto) / 1000UL, g_riavvii_simulati);
+  VERIFICA(!g_sensore_bloccato, "sensore mai sbloccato in 30 min: il power-cycle non mette a massa DQ");
+  VERIFICA(t_sblocco - t_guasto <= SENSOR_MAX_ETA_MS + SENSOR_POWER_CYCLE_TIMEOUT_MS + 30000UL,
+           "sblocco al primo power-cycle atteso, avvenuto dopo %lu s", (t_sblocco - t_guasto) / 1000UL);
+  VERIFICA(g_riavvii_simulati == 0, "riavvii per allarme sensore: %d (atteso nessuno)", g_riavvii_simulati);
+  VERIFICA((bool)(ultimo_stato()["sensore_ok"] | false), "sensore non tornato utilizzabile");
+  VERIFICA(mock_modo_pin(PIN_DS18B20) == INPUT, "DQ lasciato in uscita dopo il power-cycle");
+  VERIFICA(mock_livello_pin(PIN_SENSOR_PWR) == HIGH, "VDD del sensore lasciato spento");
+  VERIFICA(rele_heat(), "riscaldatore non ripartito dopo il recupero (T=%.2f, setpoint 20)", g_imp.temp);
+  VERIFICA(g_mock_wdt_gap_max_ms < WDT_TIMEOUT_S * 1000UL / 2, "gap massimo tra reset watchdog %lu ms", g_mock_wdt_gap_max_ms);
+  g_mock_hook_delay = nullptr;
+}
+
+// Sensore guasto per sempre: dopo i riavvii e riavvio_sospeso i power-cycle continuano ogni
+// SENSOR_POWER_CYCLE_RETRY_MS (fino alla 6.5.0 si fermavano dopo 3 tentativi).
+static void scenario_power_cycle_continui() {
+  g_modello_termico = true;
+  g_imp.temp = 17.0;
+  g_imp.ambiente = 15.0;
+  avvia_firmware();
+  avvia_profilo_costante(20.0f);
+  avanza(5 * 60 * 1000UL);
+
+  g_sensore_guasto = true;
+  avanza_con_riavvii(60 * 60 * 1000UL);
+  VERIFICA(g_riavvii_simulati == SENSOR_REBOOT_MAX, "riavvii per allarme sensore: %d (attesi %d)", g_riavvii_simulati, SENSOR_REBOOT_MAX);
+  VERIFICA(allarme_pubblicato("riavvio_sospeso"), "riavvio_sospeso non pubblicato");
+
+  const size_t da = g_mock_pubblicazioni.size();
+  avanza_con_riavvii(2 * 3600 * 1000UL);
+  const int n = conta_ack_power_cycle(da);
+  const int attesi = (int)(2 * 3600 * 1000UL / SENSOR_POWER_CYCLE_RETRY_MS);
+  printf("  power-cycle nelle 2 h dopo riavvio_sospeso: %d (attesi %d)\n", n, attesi);
+  VERIFICA(n >= attesi - 1 && n <= attesi + 1, "power-cycle dopo riavvio_sospeso: %d (attesi %d)", n, attesi);
+  VERIFICA(!rele_heat() && !rele_cool(), "relè accesi con sensore guasto e senza stima");
+
+  // Il sensore torna: il power-cycle successivo (o la lettura normale) riprende il controllo, senza riavvii.
+  g_sensore_guasto = false;
+  avanza_con_riavvii(SENSOR_POWER_CYCLE_RETRY_MS + 2 * 60 * 1000UL);
+  VERIFICA((bool)(ultimo_stato()["sensore_ok"] | false), "sensore non tornato utilizzabile");
+  VERIFICA(g_mock_wdt_gap_max_ms < WDT_TIMEOUT_S * 1000UL / 2, "gap massimo tra reset watchdog %lu ms", g_mock_wdt_gap_max_ms);
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     printf("uso: test_firmware <scenario> [-v]\n");
@@ -1170,6 +1399,12 @@ int main(int argc, char** argv) {
     else if (s == "diagnostica_reset_rele") scenario_diagnostica_reset_rele();
     else if (s == "controllo_didattico") scenario_controllo_didattico();
     else if (s == "isteresi_regolabile") scenario_isteresi_regolabile();
+    else if (s == "stima_calcolo") scenario_stima_calcolo();
+    else if (s == "stima_weekend") scenario_stima_weekend();
+    else if (s == "stima_blackout_a") scenario_stima_blackout_a();
+    else if (s == "stima_blackout_b") scenario_stima_blackout_b();
+    else if (s == "sensore_bloccato") scenario_sensore_bloccato();
+    else if (s == "power_cycle_continui") scenario_power_cycle_continui();
     else {
       printf("scenario sconosciuto: %s\n", s.c_str());
       return 2;

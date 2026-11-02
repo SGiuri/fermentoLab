@@ -155,7 +155,7 @@ static void draw_allarme(const DisplayData& d) {
   _oled.setDrawColor(1);
 
   _oled.setFont(u8g2_font_6x10_tf);
-  const char* msg = "Sensore offline";
+  const char* msg = d.stima_attiva ? "Sensore off: STIMA" : "Sensore offline";
   _oled.drawStr(center_x(msg), 32, msg);
 
   long rimasto_ms = (long)SENSOR_REBOOT_DELAY_MS
@@ -269,6 +269,16 @@ void display_init() {
 }
 
 void display_aggiorna(const DisplayData& d) {
+  // Un disturbo sull'alimentazione (commutazione della pompa) può resettare l'SSD1306: riparte spento e
+  // resta nero mentre il firmware continua a mandargli il buffer. Ogni DISPLAY_REINIT_MS si rimanda la
+  // sequenza di inizializzazione (la RAM del display resta, il buffer viene rimandato subito sotto).
+  static unsigned long ts_reinit = 0;
+  if (millis() - ts_reinit >= DISPLAY_REINIT_MS) {
+    ts_reinit = millis();
+    _oled.initDisplay();
+    _oled.setPowerSave(0);
+  }
+
   _oled.clearBuffer();
 
   const char* s = d.stato_fsm ? d.stato_fsm : "";

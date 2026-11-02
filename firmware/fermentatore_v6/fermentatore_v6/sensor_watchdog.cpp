@@ -187,10 +187,16 @@ void sensor_power_cycle_init() {
 bool sensor_power_cycle(SensorState& s) {
   s.diag.power_cycle++;  // stato errore/allarme intenzionalmente preservato
 
+  // VDD e DQ a massa insieme. Con il solo VDD a massa il DS18B20 resta alimentato in parassita dalla
+  // linea dati (pull-up su 3.3V fisso o diodi di protezione) e non si resetta: il 01/10/2026 i power-cycle
+  // da 500 ms sono falliti per 16 h, mentre uno spegnimento della scheda lo ha recuperato.
+  pinMode(PIN_DS18B20, OUTPUT);
+  digitalWrite(PIN_DS18B20, LOW);
   digitalWrite(PIN_SENSOR_PWR, LOW);
-  delay(500);
+  delay(SENSOR_POWER_CYCLE_OFF_MS);
 
   digitalWrite(PIN_SENSOR_PWR, HIGH);
+  pinMode(PIN_DS18B20, INPUT);
   delay(200);
 
   bus_init();

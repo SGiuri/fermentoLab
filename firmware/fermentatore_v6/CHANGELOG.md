@@ -1,5 +1,76 @@
 # Changelog - Fermentatore V6
 
+## [v6.5.1] - 2026-10-02
+### Recupero del DS18B20 bloccato e display nero
+- **Motivo**: dal 01/10 alle 16:00 il DS18B20 di F1 ha letto solo `-127` per 16 h: tre power-cycle, tre
+  riavvii, poi `riavvio_sospeso` e relè spenti tutta la notte (la regolazione stimata non era ancora pronta:
+  la 6.5.0 era stata caricata 20 minuti prima). Il 02/10 uno spegnimento della scheda lo ha recuperato
+  subito. Due delle perdite del 01/10 sono iniziate entro 20 s dallo spegnimento della pompa. Al riavvio
+  del 02/10 l'OLED è rimasto nero dopo la schermata di avvio.
+- **Power-cycle del sensore**: VDD (GPIO25) **e DQ** a massa insieme per 3 s (`SENSOR_POWER_CYCLE_OFF_MS`),
+  prima solo VDD per 500 ms. Con il pull-up di DQ su 3.3 V fisso (o attraverso i diodi di protezione) il
+  DS18B20 restava alimentato in parassita dalla linea dati e non si resettava.
+- **Tentativi senza limite**: i primi 3 power-cycle ogni 2 min come prima, poi uno ogni 10 min
+  (`SENSOR_POWER_CYCLE_RETRY_MS`) anche dopo `riavvio_sospeso`. Fino alla 6.5.0 dopo il terzo il firmware
+  smetteva di provare.
+- **OLED**: ogni 60 s (`DISPLAY_REINIT_MS`) il firmware rimanda la sequenza di inizializzazione
+  dell'SSD1306, così un display resettato da un disturbo di alimentazione torna a mostrare i dati.
+- Log: "Nessuna lettura valida da 4294967s" al boot con sensore già guasto ora riporta i secondi dal boot.
+- Test: nuovi scenari host `sensore_bloccato` (sensore che si sblocca solo con VDD e DQ a massa: con il
+  codice 6.5.0 resta perso con 3 riavvii, con la 6.5.1 torna al primo power-cycle dopo 144 s senza riavvii)
+  e `power_cycle_continui` (12 power-cycle nelle 2 h dopo `riavvio_sospeso`, poi ripresa del controllo).
+  30 scenari, tutti superati. Compilato per ESP32 (88 % della flash).
+
+## [v6.5.0] - 2026-10-01
+### Regolazione stimata con sensore perso
+- **Motivo**: il 2026-10-01 il DS18B20 di F1 ha smesso di rispondere due volte (10:31 e 10:46, letture
+  `-127`, recuperato ogni volta dal secondo power-cycle). Fino alla 6.4.2 un guasto permanente spegneva i
+  relè: con la stanza a 25 °C la birra sale di ~1 °C/h, e nel weekend servono fino a 50 h per arrivare in
+  laboratorio.
+- **Nuovo modulo `regolazione_stimata`**. Mentre il controllo è in RUNNING con temperatura utilizzabile, il
+  firmware impara il carico termico su blocchi di 15 min (duty reale dei relè, temperatura media) e, con
+  almeno 8 blocchi contigui (2 h, finestra fino a 4 h), ricava duty medi, temperatura media e pendenza
+  (regressione). Se il sensore è perso (nessuna lettura valida da 20 s) **pilota i relè col carico appreso**
+  invece di spegnerli: potenza netta `p = u_f·R_f − u_c·R_c + pendenza + (T_media − setpoint)/τ`, duty su
+  finestre di 40 min (cicli della pompa simili al controllo normale), massimo 60 %. Il duty di base è quello
+  misurato; `R_f` = 10 °C/h, `R_c` = 0,4 °C/h e `τ` = 12,5 h (misurati su F1 il 24/09) pesano solo sulle
+  correzioni. Il setpoint segue il profilo, che **continua ad avanzare** durante la regolazione stimata:
+  cambiare il setpoint da remoto sposta la temperatura di regime di altrettanto (leva manuale se l'iSpindel
+  mostra uno scostamento).
+- Durata massima 72 h cumulative (`STIMA_DURATA_MAX_H`), poi relè spenti. La stima e le ore sopravvivono ai
+  riavvii automatici per allarme sensore (memoria RTC) e la stima anche a un blackout (NVS, salvata al più
+  ogni ora: +24 scritture/giorno). Senza stima (meno di 2 h di controllo dall'avvio) il comportamento è
+  quello di prima: relè spenti.
+- Invariati: il ciclo power-cycle/allarme/riavvii del sensore (3 riavvii, poi `riavvio_sospeso`), i divieti
+  di sicurezza dello stadio uscite (in regolazione stimata la temperatura passata ai divieti è il setpoint),
+  `stato_fsm`.
+- MQTT: nuovo oggetto `stima` in `esp/state` (buffer da 1024 a 1280 byte) e nuovi `tipo` su `esp/alarm`:
+  `regolazione_stimata`, `fine_regolazione_stimata`, `regolazione_stimata_non_disponibile`,
+  `regolazione_stimata_scaduta` (`docs/04_CONTRATTO_HASS.md §2.1, §2.3`). OLED: "Sensore off: STIMA".
+- Test: nuovi scenari host `stima_calcolo`, `stima_weekend` (6 h di apprendimento, 50 h senza sensore con 3
+  riavvii: temperatura 18,93-19,26 °C con setpoint 19, duty appreso 8,0 % contro 8,3 % reale; poi scadenza a
+  72 h e ripresa al ritorno del sensore), `stima_blackout_a/b` (stima da NVS dopo un'accensione col sensore
+  già guasto); `sensore_guasto` verifica `regolazione_stimata_non_disponibile`. 28 scenari, tutti superati.
+  Compilato per ESP32 (88 % della flash).
+- Limite: è un controllo ad anello aperto. Se la stanza o la fermentazione cambiano, la temperatura si
+  sposta di circa 1,25 °C per ogni punto di duty sbagliato (τ·R_f), con costante di tempo di ore. Per questo
+  HA sorveglia con l'iSpindel (sotto).
+- Le funzioni di collaudo previste per la "6.5.0" (test del gruppo B nel motore di collaudo) slittano a una
+  versione successiva: i test B restano "non applicabili".
+
+### Home Assistant
+- `fermentatore_v6_f1_entita.yaml` (e F2 generato): `binary_sensor.f1_v6_regolazione_stimata`,
+  `binary_sensor.f1_v6_stima_pronta`, `sensor.f1_v6_stima_duty_freddo/_caldo/_ore/_carico_appreso`;
+  automazione `v6_f1_pkg_regolazione_stimata` (email sugli eventi `esp/alarm` della stima); l'email "sensore
+  non utilizzabile" dice se i relè sono spenti o in regolazione stimata e riporta la temperatura stimata
+  dall'iSpindel.
+- Nuovo pacchetto `fermentatore_v6_f1_ispindel.yaml` (solo F1, escluso da `genera_f2.py`): scarto
+  iSpindel − DS18B20 appreso con media esponenziale di 3 h mentre il DS18B20 regola, temperatura stimata
+  dall'iSpindel, ultimo setpoint noto; con DS18B20 perso o ESP32 offline email se la temperatura stimata si
+  scosta oltre 1,5 °C per 60 min (ripetuta ogni 6 h, poi email di rientro con la correzione di setpoint
+  suggerita) ed email se l'iSpindel tace per 3 intervalli. Installato nel Lab il 2026-10-01 (backup
+  `6a42fea2`), con ricarica e senza riavvio di HA.
+
 ## [v6.4.2] - 2026-09-20
 ### Diagnostica dei reset
 - **Nuovo modulo `diag_reset`** e nuovo topic `esp/diag` (retained). I reset `wdt` osservati su F1 dal 19/09

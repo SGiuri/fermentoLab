@@ -9,8 +9,8 @@ import re
 QUI = pathlib.Path(__file__).parent
 
 for sorgente in sorted(QUI.glob("fermentatore_v6_f1_*.yaml")):
-    if "_collaudo" in sorgente.name:
-        continue  # collaudo: solo F1
+    if any(s in sorgente.name for s in ("_collaudo", "_ispindel")):
+        continue  # collaudo e monitor iSpindel: solo F1
     destinazione = QUI / sorgente.name.replace("_f1_", "_f2_")
     testo = sorgente.read_text(encoding="utf-8")
     testo = testo.replace(

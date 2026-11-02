@@ -18,6 +18,7 @@
 #include "profilo.h"
 #include "log.h"
 #include "diag_reset.h"
+#include "regolazione_stimata.h"
 
 static ControllerState g_controller = {};
 static ControllerConfig g_config = {
@@ -56,6 +57,12 @@ static uint8_t g_sensore_valid_streak = 0;
 static uint8_t g_power_cycle_tentativi = 0;
 static bool    g_riavvio_sensore_sospeso = false;
 static bool    g_nuova_lettura = false;     // nuova lettura valida: il controllore ricalcola
+
+// --- Regolazione stimata (sensore perso, vedi regolazione_stimata.h) ---
+static bool            g_stima_attiva = false;
+static RichiestaUscite g_richiesta_stimata = {};
+static bool            g_pub_stima = false;
+static bool            g_stima_segnalata_assente = false;  // allarme "non disponibile" già inviato
 
 // Contatore riavvii per allarme sensore: sopravvive a ESP.restart(), non al power-on.
 // Evita un ciclo infinito di riavvii con sensore definitivamente guasto.
@@ -273,6 +280,7 @@ static StatoHeartbeat build_heartbeat() {
   hb.rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
   hb.commutazioni = uscite_commutazioni();
   hb.sensore_diag = g_sensore.diag;
+  hb.stima = stima_stato();
   return hb;
 }
 
@@ -320,6 +328,7 @@ static void pubblica_stato(unsigned long now) {
   g_pub_fsm  = get_stato_fsm_string();
   g_pub_heat = uscite_riscaldatore_acceso();
   g_pub_cool = uscite_refrigeratore_acceso();
+  g_pub_stima = g_stima_attiva;
 }
 
 // Heartbeat periodico + pubblicazione anticipata quando cambiano relè o stato FSM,
@@ -327,7 +336,8 @@ static void pubblica_stato(unsigned long now) {
 static void handle_heartbeat(unsigned long now) {
   const bool cambiato = (uscite_riscaldatore_acceso() != g_pub_heat) ||
                         (uscite_refrigeratore_acceso() != g_pub_cool) ||
-                        (get_stato_fsm_string() != g_pub_fsm);
+                        (get_stato_fsm_string() != g_pub_fsm) ||
+                        (g_stima_attiva != g_pub_stima);
   const unsigned long trascorso = now - g_last_status_ms;
   if (trascorso < STATUS_MIN_INTERVAL_MS) return;
   if (!cambiato && trascorso < STATUS_INTERVAL_MS) return;
@@ -461,7 +471,9 @@ static void handle_sensor_logic(unsigned long now) {
   } else if (sensore_perso) {
     if (!g_fallback_attivo) {
       g_fallback_attivo = true;
-      LOG_W("SENSORE", "Nessuna lettura valida da %lus: rele' forzati OFF", (unsigned long)(eta_ms / 1000UL));
+      const unsigned long eta_s = (eta_ms == UINT32_MAX) ? (now - g_ms_inizio_loop) / 1000UL  // mai valida dal boot
+                                                         : (unsigned long)(eta_ms / 1000UL);
+      LOG_W("SENSORE", "Nessuna lettura valida da %lus: rele' forzati OFF", eta_s);
       mqtt_pubblica_allarme("sensore_instabile", 0);
     }
     if (g_ts_sensor_instabile == 0) {
@@ -469,10 +481,13 @@ static void handle_sensor_logic(unsigned long now) {
     }
   }
 
+  // I primi tentativi a breve distanza, poi uno ogni SENSOR_POWER_CYCLE_RETRY_MS senza limite: fino alla
+  // 6.5.0 dopo tre tentativi il firmware smetteva e un sensore recuperabile restava perso per ore.
+  const unsigned long attesa_power_cycle = (g_power_cycle_tentativi < SENSOR_POWER_CYCLE_MAX_ATTEMPTS)
+                                           ? SENSOR_POWER_CYCLE_TIMEOUT_MS : SENSOR_POWER_CYCLE_RETRY_MS;
   if (g_fallback_attivo && g_ts_sensor_instabile > 0 &&
-      (now - g_ts_sensor_instabile) >= SENSOR_POWER_CYCLE_TIMEOUT_MS &&
-      g_power_cycle_tentativi < SENSOR_POWER_CYCLE_MAX_ATTEMPTS) {
-    g_power_cycle_tentativi++;
+      (now - g_ts_sensor_instabile) >= attesa_power_cycle) {
+    if (g_power_cycle_tentativi < 255) g_power_cycle_tentativi++;
     esp_task_wdt_reset();
     const bool ok = sensor_power_cycle(g_sensore);
     g_ts_sensor_instabile = millis();
@@ -502,6 +517,37 @@ static void handle_sensor_logic(unsigned long now) {
       LOG_E("SENSORE", "Sensore guasto dopo %u riavvii: resto in allarme senza riavviare", (unsigned)SENSOR_REBOOT_MAX);
       mqtt_pubblica_allarme("riavvio_sospeso", 0);
     }
+  }
+}
+
+// ============================================================
+// Regolazione stimata: relè pilotati con il carico appreso quando il sensore è perso
+// ============================================================
+static void handle_regolazione_stimata(unsigned long now, bool temp_ok) {
+  const bool in_run = g_controller.runtime_state == RuntimeState::RUNNING;
+  const bool era_attiva = g_stima_attiva;
+  const bool era_scaduta = stima_stato().scaduta;
+  g_stima_attiva = stima_aggiorna(now, in_run, temp_ok, g_fallback_attivo, g_temp, setpoint_limitato(),
+                                  uscite_riscaldatore_acceso(), uscite_refrigeratore_acceso(),
+                                  &g_richiesta_stimata);
+  const StatoStima& st = stima_stato();
+  if (g_stima_attiva && !era_attiva) {
+    mqtt_pubblica_allarme("regolazione_stimata", 0);
+  } else if (!g_stima_attiva && era_attiva) {
+    mqtt_pubblica_allarme(st.scaduta ? "regolazione_stimata_scaduta" : "fine_regolazione_stimata", 0);
+  } else if (st.scaduta && !era_scaduta) {
+    mqtt_pubblica_allarme("regolazione_stimata_scaduta", 0);
+  }
+  // Sensore perso senza una stima: relè spenti come prima della 6.5.0, una sola segnalazione.
+  if (in_run && g_fallback_attivo && !temp_ok && !st.pronta) {
+    if (!g_stima_segnalata_assente) {
+      g_stima_segnalata_assente = true;
+      LOG_W("STIMA", "Sensore perso senza stima del carico (servono %u min di controllo): rele' spenti",
+            (unsigned)(STIMA_BLOCCHI_MIN * STIMA_BLOCCO_S / 60UL));
+      mqtt_pubblica_allarme("regolazione_stimata_non_disponibile", 0);
+    }
+  } else if (temp_ok) {
+    g_stima_segnalata_assente = false;
   }
 }
 
@@ -859,6 +905,7 @@ static void handle_display(unsigned long now) {
   strncpy(dd.wifi_ssid, ssid_str.c_str(), sizeof(dd.wifi_ssid) - 1);
   dd.wifi_ssid[sizeof(dd.wifi_ssid) - 1] = '\0';
   dd.ts_ingresso_allarme_ms = g_ts_alarm_start;
+  dd.stima_attiva           = g_stima_attiva;
 
   display_aggiorna(dd);
 }
@@ -1008,6 +1055,7 @@ void setup() {
   display_init();
   sensor_power_cycle_init();
   sensor_init(g_sensore);
+  stima_init();
 
   if (caricaConfigControllo(g_config)) {
     LOG_I("NVS", "Configurazione controllo ripristinata: modo=%s", controller_mode_to_string(g_config.mode));
@@ -1117,7 +1165,8 @@ void loop() {
     g_last_control_ms = now;
 
     // --- Avanzamento del profilo e aggiornamento del setpoint (RUNNING → HOLDING a fine profilo) ---
-    avanza_profilo(now, temp_ok);
+    // In regolazione stimata la curva prosegue: il setpoint guida il duty stimato.
+    avanza_profilo(now, temp_ok || g_stima_attiva);
     aggiorna_setpoint_da_profilo(true);
 
     if (g_controller.runtime_state == RuntimeState::AUTOTUNING) {
@@ -1145,6 +1194,8 @@ void loop() {
       g_controller.ts_calc_ms = 0;  // evita un dt enorme sull'integrale alla ripresa
       g_controller.misura_prec_valida = false;
     }
+
+    handle_regolazione_stimata(now, temp_ok);
   }
 
   // Il controllore ricalcola a ogni nuova lettura valida (ogni SENSOR_READ_INTERVAL_MS):
@@ -1158,14 +1209,20 @@ void loop() {
 
   // Stadio uscite a ogni loop: risoluzione fine della finestra duty e spegnimenti immediati.
   diag_reset_sezione(SEZ_USCITE);
-  const RichiestaUscite richiesta = {
+  const RichiestaUscite richiesta_controllo = {
     g_controller.heat_on,
     g_controller.cool_on,
     g_controller.heat_duty_pct,
     g_controller.cool_duty_pct
   };
-  const bool forza_spegnimento = !temp_ok || g_controller.runtime_state != RuntimeState::RUNNING;
-  uscite_aggiorna(richiesta, forza_spegnimento, g_temp, setpoint_limitato(), now);
+  if (g_stima_attiva && g_controller.runtime_state == RuntimeState::RUNNING) {
+    // Nessuna misura: per i divieti di sicurezza la temperatura è quella che la stima tiene,
+    // il setpoint (la temperatura congelata farebbe scattare la banda a ogni cambio di setpoint).
+    uscite_aggiorna(g_richiesta_stimata, false, setpoint_limitato(), setpoint_limitato(), now);
+  } else {
+    const bool forza_spegnimento = !temp_ok || g_controller.runtime_state != RuntimeState::RUNNING;
+    uscite_aggiorna(richiesta_controllo, forza_spegnimento, g_temp, setpoint_limitato(), now);
+  }
 
   diag_reset_sezione(SEZ_HEARTBEAT);
   handle_heartbeat(now);
