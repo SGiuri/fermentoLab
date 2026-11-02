@@ -1,0 +1,168 @@
+# =============================================================================
+# Dashboard "V7 Nodo sensori" (HA Lab, modalità storage, url_path v7-sensori)
+# Sonde: le tre temperature (F1, chiller, F2), la loro diagnostica e i comandi di recupero.
+# Collegamento: il nodo è online? Ping periodico, segnale, ping di andata e ritorno.
+# Caricata via WebSocket (lovelace/config/save), senza riavvio di HA: non modificarla da UI senza
+# riportare qui le modifiche. Richiede apexcharts-card (HACS, già installata sul Lab).
+# =============================================================================
+title: V7 Nodo sensori
+views:
+  - title: Sonde
+    path: sonde
+    icon: mdi:thermometer-lines
+    cards:
+      - type: grid
+        columns: 3
+        square: false
+        cards:
+          - type: tile
+            entity: sensor.v7_temperatura_f1
+            name: F1
+          - type: tile
+            entity: sensor.v7_temperatura_chiller
+            name: Chiller
+          - type: tile
+            entity: sensor.v7_temperatura_f2
+            name: F2
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Temperature (24 ore)
+          show_states: false
+        graph_span: 24h
+        apex_config:
+          legend:
+            show: true
+        yaxis:
+          - decimals: 1
+            apex_config:
+              forceNiceScale: true
+        series:
+          - entity: sensor.v7_temperatura_f1
+            name: F1
+            color: "#e34948"
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 5min
+          - entity: sensor.v7_temperatura_chiller
+            name: Chiller
+            color: "#2a78d6"
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 5min
+          - entity: sensor.v7_temperatura_f2
+            name: F2
+            color: "#c98500"
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 5min
+      # Diagnostica dal ping (ogni 30 s): letture, scartate per causa, power-cycle, riavvii del nodo.
+      - type: markdown
+        title: Stato delle sonde
+        content: |
+          {%- set p = states.sensor.v7_sensori_ping %}
+          {%- set sonde = p.attributes.get('sonde', {}) if p and p.state not in ['unknown', 'unavailable'] else {} %}
+          {%- set nomi = {'f1': 'F1', 'ch': 'Chiller', 'f2': 'F2'} %}
+          {%- if sonde | count == 0 %}
+          Nessun dato dal nodo sensori: il ping arriva ogni 30 s.
+          {%- else %}
+          | Sonda | Stato | Ultima valida | Letture | Scartate (scoll. / 85 °C / scala) | Power-cycle |
+          |---|---|--:|--:|--:|--:|
+          {%- for id in ['f1', 'ch', 'f2'] %}
+          {%- set s = sonde.get(id, {}) %}
+          | {{ nomi[id] }} | {{ '✅ ok' if s.get('ok') else '⚠️ ' ~ s.get('errore', 'persa') }} | {{ ('%.2f °C, %d s fa' | format(s.get('t'), s.get('eta_s', 0))) if s.get('t') is number else '—' }} | {{ s.get('letture', 0) }} | {{ s.get('non_valide', 0) }} ({{ s.get('scollegato', 0) }} / {{ s.get('poweron_85', 0) }} / {{ s.get('fuori_scala', 0) }}) | {{ s.get('power_cycle', 0) }} |
+          {%- endfor %}
+
+          Riavvii del nodo per una sonda persa: **{{ p.attributes.get('riavvii_sonde', 0) }}** di 3
+          {%- if p.attributes.get('sonda_riavvio') %} (ultimo per {{ nomi.get(p.attributes.get('sonda_riavvio'), p.attributes.get('sonda_riavvio')) }}){% endif %}
+          · rete {{ p.attributes.get('rete', '—') }} · firmware {{ p.attributes.get('fw', '—') }}
+          {%- endif %}
+      - type: entities
+        title: Recupero
+        entities:
+          - entity: script.v7_sensori_power_cycle
+            name: Power-cycle di una sonda
+          - entity: script.v7_sensori_riavvia
+            name: Riavvia il nodo (cerca l'hotspot dell'OTA)
+      - type: logbook
+        title: Eventi del nodo
+        target:
+          entity_id: binary_sensor.v7_sensori_online
+        hours_to_show: 72
+
+  - title: Collegamento
+    path: collegamento
+    icon: mdi:access-point-network
+    cards:
+      - type: markdown
+        content: |
+          {%- set ping = states.sensor.v7_sensori_ping %}
+          {%- set ultimo = states('sensor.v7_sensori_ultimo_ping') %}
+          {%- if is_state('binary_sensor.v7_sensori_online', 'on') %}
+          ### 🟢 Nodo sensori S3 online
+          {%- elif is_state('binary_sensor.v7_sensori_online', 'off') %}
+          ### 🔴 Nodo sensori S3 offline
+          {%- else %}
+          ### ⚪ Nodo sensori S3 mai visto
+          {%- endif %}
+
+          {% if ultimo not in ['unknown', 'unavailable'] -%}
+          Ultimo ping **{{ as_timestamp(ultimo) | timestamp_custom('%d/%m %H:%M:%S') }}**,
+          {{ ((now() - as_datetime(ultimo)).total_seconds()) | round(0) | int }} s fa
+          {%- if ping and ping.state not in ['unknown', 'unavailable'] %}
+          · n. **{{ ping.state }}** · firmware {{ ping.attributes.get('fw', '—') }}
+          · acceso da {{ (ping.attributes.get('uptime_s', 0) / 60) | round(1) }} min (reset: {{ ping.attributes.get('reset', '—') }})
+          · RSSI {{ ping.attributes.get('rssi', '—') }} dBm
+          {%- endif %}
+          {%- else -%}
+          Nessun ping ricevuto finora. Il nodo pubblica ogni 30 s su `fermentazione/v7/sensori/ping`.
+          {%- endif %}
+      - type: entities
+        title: Ping di andata e ritorno
+        entities:
+          - entity: script.v7_sensori_ping
+            name: Manda un ping al nodo
+          - entity: sensor.v7_sensori_andata_e_ritorno
+            name: Andata e ritorno (HA → S3 → HA)
+            secondary_info: last-updated
+      - type: entities
+        title: Nodo
+        entities:
+          - entity: binary_sensor.v7_sensori_online
+            name: Online (LWT)
+            secondary_info: last-changed
+          - entity: sensor.v7_sensori_ping
+            name: Ping ricevuti dall'ultimo avvio
+          - entity: sensor.v7_sensori_rssi
+            name: Segnale WiFi
+          - entity: sensor.v7_sensori_uptime
+            name: Acceso da
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Ping e segnale (6 ore)
+          show_states: true
+        graph_span: 6h
+        apex_config:
+          markers:
+            size: [3, 0]
+        yaxis:
+          - id: seq
+            decimals: 0
+          - id: dbm
+            opposite: true
+            decimals: 0
+        series:
+          - entity: sensor.v7_sensori_ping
+            name: N. ping
+            yaxis_id: seq
+            type: line
+            curve: stepline
+            stroke_width: 1
+          - entity: sensor.v7_sensori_rssi
+            name: RSSI
+            yaxis_id: dbm
+            stroke_width: 2

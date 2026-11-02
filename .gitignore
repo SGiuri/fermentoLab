@@ -47,3 +47,6 @@ __pycache__/
 
 # Host firmware tests (build output)
 **/tests/host/build/
+
+# V7 actuator host tests (build output, also holds a copy of secrets.h)
+firmware/fermentatore_v7/test_attuatori/build_*/

@@ -1,0 +1,184 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V7 — NODO SENSORI (ESP32-S3 Super Mini)
+#
+# Il nodo pubblica:
+#   fermentazione/v7/sensori/stato        retained, online | offline (LWT)
+#   fermentazione/v7/sensori/temp/<id>    ogni 5 s per sonda (f1, ch, f2): {"seq","t","ts"}, oppure
+#                                         {"seq","t":null,"err","ts"} se la lettura è scartata
+#   fermentazione/v7/sensori/ping         ogni 30 s: stato del nodo e diagnostica di ogni sonda ("sonde")
+#   fermentazione/v7/sensori/evento       power-cycle, riavvii, comandi
+#   fermentazione/v7/sensori/pong         risposta a cmd/ping, con lo stesso token
+# e riceve fermentazione/v7/sensori/cmd/ping | riavvia | power_cycle.
+# Il nodo attuatori di F1 (firmware 7.x) legge temp/f1 direttamente dal broker, senza passare da HA.
+# Niente MQTT discovery: il broker è lo stesso dell'istanza personale.
+# =============================================================================
+
+mqtt:
+  binary_sensor:
+    - name: "V7 Sensori Online"
+      unique_id: v7_sensori_online
+      state_topic: "fermentazione/v7/sensori/stato"
+      payload_on: "online"
+      payload_off: "offline"
+      device_class: connectivity
+
+  sensor:
+    # Temperature: lettura scartata ("t": null) = stato sconosciuto, causa nell'attributo err.
+    # expire_after: senza letture per 1 minuto lo stato diventa non disponibile.
+    - name: "V7 Temperatura F1"
+      unique_id: v7_temperatura_f1
+      state_topic: "fermentazione/v7/sensori/temp/f1"
+      value_template: "{{ value_json.t if value_json.t is not none else none }}"
+      json_attributes_topic: "fermentazione/v7/sensori/temp/f1"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      suggested_display_precision: 2
+      expire_after: 60
+    - name: "V7 Temperatura Chiller"
+      unique_id: v7_temperatura_chiller
+      state_topic: "fermentazione/v7/sensori/temp/ch"
+      value_template: "{{ value_json.t if value_json.t is not none else none }}"
+      json_attributes_topic: "fermentazione/v7/sensori/temp/ch"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      suggested_display_precision: 2
+      expire_after: 60
+    - name: "V7 Temperatura F2"
+      unique_id: v7_temperatura_f2
+      state_topic: "fermentazione/v7/sensori/temp/f2"
+      value_template: "{{ value_json.t if value_json.t is not none else none }}"
+      json_attributes_topic: "fermentazione/v7/sensori/temp/f2"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      suggested_display_precision: 2
+      expire_after: 60
+
+    # Stato: numero progressivo del ping (riparte da 1 a ogni riavvio). Attributi: tutto il messaggio,
+    # compresa la diagnostica delle sonde (attributo "sonde").
+    - name: "V7 Sensori Ping"
+      unique_id: v7_sensori_ping
+      state_topic: "fermentazione/v7/sensori/ping"
+      value_template: "{{ value_json.seq }}"
+      json_attributes_topic: "fermentazione/v7/sensori/ping"
+      expire_after: 90
+      icon: mdi:heart-pulse
+    - name: "V7 Sensori RSSI"
+      unique_id: v7_sensori_rssi
+      state_topic: "fermentazione/v7/sensori/ping"
+      value_template: "{{ value_json.rssi }}"
+      unit_of_measurement: "dBm"
+      device_class: signal_strength
+      state_class: measurement
+      expire_after: 90
+    - name: "V7 Sensori Uptime"
+      unique_id: v7_sensori_uptime
+      state_topic: "fermentazione/v7/sensori/ping"
+      value_template: "{{ value_json.uptime_s }}"
+      unit_of_measurement: "s"
+      device_class: duration
+      expire_after: 90
+
+template:
+  # Ora dell'ultimo ping ricevuto: un sensore MQTT con expire_after, dopo un riavvio di HA, riporterebbe
+  # l'ora del riavvio. Questo resta giusto (sensore a trigger, ripristinato).
+  - triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v7/sensori/ping"
+    sensor:
+      - name: "V7 Sensori Ultimo Ping"
+        unique_id: v7_sensori_ultimo_ping
+        icon: mdi:clock-check-outline
+        device_class: timestamp
+        state: "{{ now().isoformat() }}"
+
+  # Andata e ritorno HA → broker → S3 → broker → HA: il token è l'ora di invio in millisecondi.
+  - triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v7/sensori/pong"
+    sensor:
+      - name: "V7 Sensori Andata e Ritorno"
+        unique_id: v7_sensori_andata_ritorno
+        icon: mdi:swap-horizontal
+        unit_of_measurement: "ms"
+        state: >-
+          {% set t = trigger.payload_json.token | int(0) if trigger.payload_json is defined else 0 %}
+          {{ (now().timestamp() * 1000) | int - t if t > 0 else none }}
+
+automation:
+  # Power-cycle, riavvii e comandi del nodo sensori nel registro: si vedono nella dashboard e nella cronologia.
+  - id: v7_sensori_eventi_nel_registro
+    alias: "V7 Sensori - Eventi nel registro"
+    mode: queued
+    max: 20
+    triggers:
+      - trigger: mqtt
+        topic: "fermentazione/v7/sensori/evento"
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.payload_json is defined }}"
+    actions:
+      - action: logbook.log
+        data:
+          name: "Nodo sensori V7"
+          entity_id: binary_sensor.v7_sensori_online
+          message: >-
+            {% set e = trigger.payload_json %}
+            {{ {'power_cycle': 'power-cycle della sonda', 'riavvio': 'riavvio del nodo',
+                'comando_power_cycle': 'power-cycle chiesto da HA per la sonda',
+                'comando_sconosciuto': 'comando sconosciuto'}.get(e.tipo, e.tipo) }}
+            {{- ' ' ~ e.sonda if e.sonda is defined else '' }}
+            {{- ': ' ~ e.dettaglio if e.dettaglio is defined else '' }}
+
+script:
+  v7_sensori_ping:
+    alias: "V7 Sensori - Ping di andata e ritorno"
+    icon: mdi:access-point-check
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "fermentazione/v7/sensori/cmd/ping"
+          payload: >-
+            {"token":{{ (now().timestamp() * 1000) | int }}}
+          qos: 1
+
+  # Riavvia la S3: per esempio per farle cercare l'hotspot dell'OTA, che si cerca solo all'avvio.
+  v7_sensori_riavvia:
+    alias: "V7 Sensori - Riavvia il nodo"
+    icon: mdi:restart
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "fermentazione/v7/sensori/cmd/riavvia"
+          payload: "{}"
+          qos: 1
+
+  v7_sensori_power_cycle:
+    alias: "V7 Sensori - Power-cycle di una sonda"
+    icon: mdi:power-cycle
+    mode: queued
+    fields:
+      sonda:
+        name: Sonda
+        required: true
+        default: f1
+        selector:
+          select:
+            options:
+              - label: F1
+                value: f1
+              - label: Chiller
+                value: ch
+              - label: F2
+                value: f2
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "fermentazione/v7/sensori/cmd/power_cycle"
+          payload: >-
+            {"sonda":"{{ sonda }}"}
+          qos: 1
