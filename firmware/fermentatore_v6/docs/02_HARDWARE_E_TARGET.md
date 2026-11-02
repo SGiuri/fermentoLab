@@ -54,6 +54,12 @@ Alimentazioni consigliate:
 > sopra. Vedi [06_COLLAUDO_F1.md §7](06_COLLAUDO_F1.md#7-risultati-della-prima-sessione-fase-a-avviata-2026-09-18-2350-fw-630) per i
 > dettagli e i rimedi in prova (condensatore su EN, snubber sulla pompa, alimentazione separata del
 > modulo relè). **Da tenere presente fin dalla progettazione elettrica di F2.**
+>
+> **Sonda persa sulla scheda dei relè (ottobre 2026).** Il DS18B20 di F1 si è perso per ore l'1-2/10 e il
+> 25-27/10. Il sospetto è il VDD della sonda sui 3,3 V fissi invece che su GPIO25, che rende inutile il
+> power-cycle. Dal 2026-10-28 le sonde stanno su un nodo a parte, un ESP32-S3 Super Mini con 3 DS18B20 (F1,
+> chiller, F2): cablaggio sulla millefori e pin in [`../../fermentatore_v7/README.md`](../../fermentatore_v7/README.md).
+> I GPIO33/25 del WROOM di F1 non sono più letti (`SORGENTE_TEMPERATURA_REMOTA 1`).
 
 ## 3. Pin map ESP32-S3 Super Mini (non in uso oggi)
 

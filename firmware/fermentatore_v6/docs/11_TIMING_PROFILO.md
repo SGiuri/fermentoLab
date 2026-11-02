@@ -1,8 +1,9 @@
 # 11. Cattura delle curve di fermentazione: come funziona, rischi, cosa è stato corretto
 
 **Versione documento**: 2.0 (2026-09-19) · **Stato**: analisi (§1-3) corrente; l'opzione A (§4.1) è
-**implementata nel firmware 6.4.0**, validata con i test host e il simulatore offline — **non ancora
-flashata su F1** (nessun accesso al dispositivo prima di lunedì). §2-3 restano la descrizione
+**implementata nel firmware 6.4.0**, validata con i test host e il simulatore offline, e in uso su F1
+dalla 6.4.x di settembre. Ci sono anche la 6.5.x e il nodo attuatori V7 7.0.0, che non la cambiano: il 28/10
+il profilo in corso è sopravvissuto al flash OTA. §2-3 restano la descrizione
 accurata del comportamento fino alla 6.3.0 (installata su F1 al momento in cui questo documento è
 stato scritto). Riferimenti: [00_INDICE.md](00_INDICE.md), [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md),
 [10_PUNTI_APERTI.md](10_PUNTI_APERTI.md).
@@ -311,8 +312,8 @@ scostamento fra dove il setpoint pianificato è arrivato e dove la temperatura r
 - [x] Opzione A implementata, opzione C valutata e scartata, opzione D non necessaria per ora —
   vedi §4.5.
 - [x] Portato `profili_fermentazione/*.json` dal Lab al repository (§5.2).
-- [ ] Flashare 6.4.0 su F1 e ripetere da capo la Fase A del collaudo — al prossimo accesso
-  (lunedì, vedi [10_PUNTI_APERTI.md §1](10_PUNTI_APERTI.md)).
+- [x] Flashare 6.4.0 su F1 (fatto con la 6.4.2; dal 2026-10-28 F1 ha la V7 7.0.0).
+- [ ] Ripetere da capo la Fase A del collaudo a fermentatore vuoto (vedi [10_PUNTI_APERTI.md §1](10_PUNTI_APERTI.md)).
 - [ ] Aggiungere `corrente_in_rampa` (§6.2) al collaudo — non richiede firmware nuovo, si può fare
   prima di lunedì; dopo il flash di 6.4.0 diventa un vero test di conformità (non solo uno
   strumento di misura del problema, essendo la causa ormai corretta).

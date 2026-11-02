@@ -1,7 +1,12 @@
 # 06. Collaudo automatico di F1
 
-**Versione documento**: 1.0 (2026-09-19) · **Stato**: corrente · **Motore collaudo**: 1.2.0 · **Obiettivo**:
+**Versione documento**: 1.1 (2026-11-02) · **Stato**: corrente · **Motore collaudo**: 1.4.0 · **Obiettivo**:
 verificare F1 senza birra prima del 2026-10-03
+
+> **Stato al 2026-11-02.** F1 è in produzione dal 2026-10-02 (lager, poi witbier) e dal 28/10 ha il nodo
+> attuatori V7 7.0.0 con la temperatura dal nodo sensori ([`../../fermentatore_v7/README.md`](../../fermentatore_v7/README.md)).
+> La Fase A descritta qui (§7) non risulta conclusa né ripetuta. Il collaudo resta lo strumento per il prossimo
+> fermentatore vuoto: cosa rifare e cosa aggiungere per la V7 è in [10_PUNTI_APERTI.md §1](10_PUNTI_APERTI.md).
 
 Il collaudo è una suite di test reali sul fermentatore F1 (non simulati): invia comandi MQTT veri, legge
 lo stato e lo storico da Home Assistant e giudica il comportamento con criteri numerici. Gira da solo in
@@ -120,7 +125,11 @@ regolazione ripresa, tempo del profilo non tornato indietro, nessuna email di al
 **Commutazioni della pompa** (`stress_pompa`): sposta il setpoint appena sotto e appena sopra la
 temperatura 25 volte, rispettando i tempi minimi dei relè (accendi, aspetta 40 s, spegni, aspetta 65 s), e
 conta i riavvii spontanei dell'ESP32 e i minuti con sensore inutilizzabile. Nato per ricreare il guasto
-storico "perdita del sensore alla commutazione dei relè" (§7).
+storico "perdita del sensore alla commutazione dei relè" (§7). Dal motore 1.4.0 il numero di cicli si può
+scegliere all'avvio (1-200, un ciclo dura circa 3 minuti) mandando l'evento a mano, per esempio da
+*Strumenti per sviluppatori → Eventi*: `f1_collaudo_comando` con
+`{"azione": "avvia", "test": ["stress_pompa"], "cicli_stress": 50}` (F1 in modalità Collaudo). La dashboard
+continua a lanciarne 25.
 
 **Rampa 17 → 10 °C**: profilo con rampa lineare di 6 ore (1,2 °C/h, come dalla sosta del diacetile alla
 maturazione). Verifica il setpoint a metà rampa, lo scostamento durante la rampa, e la temperatura 1,5 ore
@@ -269,7 +278,8 @@ python fermentatore_v6/tests/collaudo/simula_collaudo.py completo   # un solo sc
 Scenari: `completo` (Fase A intera + blackout simulato), `modi` (i quattro test dei modi), `pompa_reset`
 (reset casuale al 10 % delle commutazioni, per verificare che il collaudo lo rilevi), `riavvio_motore`
 (riavvio del motore a metà sessione, verifica la ripresa dallo stato), `freddo_debole` (chiller
-sottodimensionato), `bug_firmware` (un firmware che eseguisse per errore uno STOP vecchio).
+sottodimensionato), `bug_firmware` (un firmware che eseguisse per errore uno STOP vecchio), `ordine` (controllo istantaneo: l'ordine di
+esecuzione non dipende da quello di scelta, vedi §9).
 
 ## 9. Come usarlo
 
@@ -278,6 +288,19 @@ sottodimensionato), `bug_firmware` (un firmware che eseguisse per errore uno STO
 3. Seguire l'andamento nella vista Collaudo: stato, verdetto, grafico di 3 giorni, risultati, registro.
 4. *Salta* passa al test successivo; *Interrompi* chiude la sessione e riporta F1 in produzione.
 5. A sessione conclusa, decidere in base al verdetto se procedere con la birra o correggere e ripetere.
+
+**Ordine di esecuzione.** I test scelti non girano nell'ordine di selezione né in quello del catalogo, ma in
+`ORDINE_ESECUZIONE` (`collaudo_motore.py`, dal motore 1.3.0), costruito sulla temperatura dell'acqua:
+`comandi`, `riavvio`, `stress_pompa` (indifferenti alla temperatura, così un problema si vede subito), poi
+`diacetile` (l'unico riscaldamento vero, fino a 17 °C), `rampa` (parte già da 17 °C e scende a 10), `lager`
+(10 °C), `modo_on_off`, `modo_p`, `modo_pi`, `modo_pid` (ognuno scende di 1,5 °C da dove finisce il precedente),
+`cold_crash` (fino a 2 °C) e `allarme_freddo` (parte già da 2 °C). Si scalda una volta sola e poi si scende,
+perché il riscaldamento è la direzione lenta (fascia da 30-35 W, circa 2 °C/h su F1). Nel simulatore (12 test,
+partenza a 8,5 °C) questo ordine dura 47,5 h, come il vecchio ordine di catalogo; alternare raffreddamento e
+riscaldamento ne dura 52,0 e partire dal cold crash 49,3. Il tempo è fatto soprattutto di tenute (circa 40 h su
+47): gli arrivi obbligati sono solo il riscaldamento a 17 °C e il raffreddamento a 2 °C. I test non elencati
+(gruppi B e C) seguono in ordine di catalogo. Per cambiarlo si modifica `ORDINE_ESECUZIONE` e si valida con il
+simulatore (§8, scenario `ordine`).
 
 Per aggiungere un test a una sessione già in corso (come fatto per i quattro test dei modi durante questa
 sessione): evento `f1_collaudo_comando` con `azione: inserisci`, `test: [...]` e opzionalmente

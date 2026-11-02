@@ -1,6 +1,11 @@
 # 00. Indice della documentazione V6
 
-**Versione documento**: 1.0 (2026-09-19) · **Stato**: corrente
+**Versione documento**: 1.1 (2026-11-02) · **Stato**: corrente
+
+> **V7 (dal 2026-10-27).** Le sonde sono passate su un nodo sensori a parte (ESP32-S3) e il WROOM di F1 ha il
+> nodo attuatori 7.0.0. La V7 ha README e CHANGELOG propri in [`../../fermentatore_v7/`](../../fermentatore_v7/).
+> Questi documenti restano il riferimento per contratto MQTT, Home Assistant, profili e collaudo, che la V7
+> riusa invariati. Le birre fatte stanno in [`../storico_birre/`](../storico_birre/), una scheda JSON per birra.
 
 Elenco di tutti i documenti V6, in ordine di lettura consigliato. Ogni file ha nell'intestazione una
 riga "Versione documento" (numero + data) e uno stato: **corrente** (riflette il sistema oggi),
@@ -25,7 +30,7 @@ Per il resto del repository (build, flash, convenzioni di codice, versioni prece
 | 08 | [08_RUNBOOK_OPERATIVO.md](08_RUNBOOK_OPERATIVO.md) | corrente | Checklist di pre-deploy, deploy, smoke test, rollback, incident response |
 | 09 | [09_TOOLING.md](09_TOOLING.md) | parziale | Toolchain di build info (manifest/generate/verify) — nota: disallineata dal firmware reale |
 | 10 | [10_PUNTI_APERTI.md](10_PUNTI_APERTI.md) | vivo | Lavoro da fare, decisioni in sospeso, idee — include l'onboarding di F2 da zero |
-| 11 | [11_TIMING_PROFILO.md](11_TIMING_PROFILO.md) | analisi/proposta | Come il firmware avanza lungo la curva di fermentazione, rischi (assenza rete, blackout e guasto del sensore durante una rampa) e alternative |
+| 11 | [11_TIMING_PROFILO.md](11_TIMING_PROFILO.md) | analisi, opzione A in uso | Come il firmware avanza lungo la curva di fermentazione, rischi (assenza rete, blackout e guasto del sensore durante una rampa) e alternative |
 | 12 | [12_HARDWARE_DUAL_F1_F2.md](12_HARDWARE_DUAL_F1_F2.md) | alternativa non adottata | Scheda unica F1+F2 con 4 relè e 3 sonde: valutazione hardware, impatto su firmware e HA, migrazione (sonde e prove di banco ancora utili) |
 | 13 | [13_F2_SCHEDA_INDIPENDENTE.md](13_F2_SCHEDA_INDIPENDENTE.md) | corrente | F2 su scheda indipendente con sonda del bagno di glicole: pin map, firmware, Home Assistant, migrazione |
 

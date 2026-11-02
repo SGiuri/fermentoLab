@@ -15,11 +15,18 @@ It started as a **school project** and is also built to be a **teaching tool**: 
 swap control algorithms (on/off, hysteresis, P, PI, PID), watch the P, I and D terms live and run step-response
 experiments on a real tank, without beer. See [Learning with it](#learning-with-it-didactic-mode).
 
-> **Status (2026-09-20).** The active firmware is `fermentatore_v6` (source version **6.4.2**). One
-> controller, **F1**, exists as a bench unit running 6.3.0 and is being validated with an automated test
-> suite before real beer goes in. A second one, **F2**, exists only as a software identity and a design
-> ([`13_F2_SCHEDA_INDIPENDENTE.md`](firmware/fermentatore_v6/docs/13_F2_SCHEDA_INDIPENDENTE.md)). There is a
-> **known hardware fault under investigation** (spontaneous ESP32 resets, see [Known issues](#known-issues)).
+> **Status (2026-11-02).** Two beers have been fermented with it since October 2026. **F1** runs the **V7**
+> firmware (since 2026-10-28) and follows a witbier on its fermentation profile:
+>
+> - a separate ESP32-S3 *sensor node* reads three DS18B20 probes (F1, the glycol chiller, F2) and publishes them
+>   over MQTT;
+> - the F1 ESP32 (V7 *actuator node*, derived from `fermentatore_v6` 6.5.1) takes its temperature from that
+>   node and drives the relays.
+>
+> The split was made because F1's probe was lost several times while it sat on the relay board (see
+> [Known issues](#known-issues) and [`firmware/fermentatore_v7/README.md`](firmware/fermentatore_v7/README.md)).
+> **F2** still has no relays of its own. Its batch, a lager, is controlled by an off-the-shelf Inkbird, and Home
+> Assistant only monitors it (V7 probe and iSpindel). A 4-relay actuator node for F1 + F2 is the next step.
 > Treat this as a working project, not a finished product.
 
 The documentation under `firmware/fermentatore_v6/docs/` is written in **Italian**; this README is the
@@ -129,13 +136,19 @@ FermentaLab/
 │   ├── genera_schema.py          script that generates the SVG (edit and re-run to change the drawing)
 │   └── bom_f1.csv                bill of materials
 ├── firmware/
-│   ├── fermentatore_v6/          ACTIVE
+│   ├── fermentatore_v6/          single-board controller (6.5.1) and all the documentation, HA config, profiles
 │   │   ├── fermentatore_v6/      the Arduino sketch (.ino + modules) — open this folder in the Arduino IDE
 │   │   ├── docs/                 numbered documentation (start with 00_INDICE.md)
 │   │   ├── hass_spec/            Home Assistant packages, dashboards, AppDaemon test engine
 │   │   ├── profili/              fermentation profile catalog (JSON)
+│   │   ├── storico_birre/        one JSON record per beer brewed (HA "Storico birre" dashboard)
 │   │   ├── tests/                host tests (mocks) and offline simulator of the test suite
 │   │   └── tools/v6/             target configurator, build-info tooling, E2E MQTT test
+│   ├── fermentatore_v7/          IN USE ON F1: sensors split from actuators
+│   │   ├── nodo_sensori_s3/      ESP32-S3 sensor node (3 DS18B20 → MQTT)
+│   │   ├── nodo_attuatori/       F1 actuator node (6.5.1 with remote temperature)
+│   │   ├── test_attuatori/       host tests of the actuator node, local and remote source
+│   │   └── hass_spec/            sensor-node package and dashboard
 │   └── obsolete/                 frozen v2–v5 line, reference only
 └── homeassistant/                Home Assistant configuration snapshot, start script, secrets template
 ```
@@ -272,7 +285,8 @@ Short version — details and the exact file list are in
 2. Copy `homeassistant/*` into `/config` (merge, don't overwrite), fill `secrets.yaml` from
    `secrets.yaml.template`, and create `scripts_py/mqtt_broker.json` from its template (a long-lived token).
 3. Copy `firmware/fermentatore_v6/hass_spec/packages/*` to `/config/packages/`, the dashboards to `/config/`,
-   and `firmware/fermentatore_v6/profili/*.json` to `/config/profili_fermentazione/`.
+   and `firmware/fermentatore_v6/profili/*.json` to `/config/profili_fermentazione/`. With the V7 sensor node, add
+   `firmware/fermentatore_v7/hass_spec/packages/*` and its dashboard as well.
 4. Check the configuration, reload, open the dashboards *F1 Laboratorio* / *F1 Collaudo*.
 
 > **Do not enable MQTT discovery on a broker shared with real hardware**, and remember that anything Home
@@ -284,7 +298,8 @@ Short version — details and the exact file list are in
 
 | Level | How | What it covers |
 |---|---|---|
-| Host tests (minutes, no hardware) | `powershell -File firmware\fermentatore_v6\tests\host\run_tests.ps1` (needs MSVC Build Tools) | The real firmware sources compiled against Arduino/ESP32 mocks: **24 scenarios**, including 48 h thermal simulations |
+| Host tests (minutes, no hardware) | `powershell -File firmware\fermentatore_v6\tests\host\run_tests.ps1` (needs MSVC Build Tools) | The real firmware sources compiled against Arduino/ESP32 mocks: **30 scenarios**, including 48 h thermal simulations and the lost-sensor estimated control |
+| V7 actuator host tests | `powershell -File firmware\fermentatore_v7\test_attuatori\run_tests.ps1` | The V7 actuator sketch built with the local probe (31 scenarios) and with the remote temperature from the sensor node (29 scenarios) |
 | Offline test-suite simulator | `python firmware/fermentatore_v6/tests/collaudo/simula_collaudo.py` | The real AppDaemon test engine against a modeled fermenter, in seconds |
 | On-hardware collaudo (hours to days) | AppDaemon app in Home Assistant | Scripted tests over real MQTT with numeric pass criteria: sensor recovery, relay switching, profile ramps, alarms — [`06_COLLAUDO_F1.md`](firmware/fermentatore_v6/docs/06_COLLAUDO_F1.md) |
 | E2E MQTT | `firmware/fermentatore_v6/tools/v6/test_e2e.py` (broker credentials via `MQTT_SERVER`, `MQTT_USER`, `MQTT_PASS` environment variables) | Command/ack/state contract against a live device |
@@ -304,6 +319,13 @@ Test plan: [`07_TEST_PLAN.md`](firmware/fermentatore_v6/docs/07_TEST_PLAN.md).
   [`06_COLLAUDO_F1.md §7`](firmware/fermentatore_v6/docs/06_COLLAUDO_F1.md),
   [`10_PUNTI_APERTI.md`](firmware/fermentatore_v6/docs/10_PUNTI_APERTI.md).
   Keep this in mind for any relay-driving hardware you build.
+- **DS18B20 lost on the relay board.** On 2026-10-01/02 and 2026-10-25/27 F1's probe read only `-127` for hours.
+  Power-cycling the probe from a GPIO and rebooting the ESP32 did not bring it back. Twice only removing power from
+  the whole board did, and on 2026-10-27 not even that. Firmware 6.5.0 added an *estimated control* that keeps the
+  relays going on the learned thermal load when the probe is lost, and 6.5.1 a stronger probe power-cycle (VDD
+  and DQ grounded). On 2026-10-26, with an intermittent probe, a bug in the estimated control restarted its
+  window with the pump on at every loss and cooled the beer to 12.1 °C (fixed in V7). V7 moves the probes to a
+  separate board: [`firmware/fermentatore_v7/README.md`](firmware/fermentatore_v7/README.md).
 - `firmware/fermentatore_v6/v6_manifest.json` and its build-info scripts are a separate, stale mechanism: they
   never read `FIRMWARE_VERSION` from `config.h`. See [`09_TOOLING.md`](firmware/fermentatore_v6/docs/09_TOOLING.md).
 - Autotuning is implemented but disabled (`AUTOTUNE_ABILITATO 0`).
@@ -337,6 +359,8 @@ Nothing in this repository should contain a credential, a token or a private add
 Start at [`firmware/fermentatore_v6/docs/00_INDICE.md`](firmware/fermentatore_v6/docs/00_INDICE.md) (Italian):
 hardware and targets (02), MQTT protocol and contract (03, 04), Home Assistant (05), automated collaudo (06),
 test plan (07), runbook (08), open items (10), profile timing (11), the F2 design (12, 13).
+The V7 split (sensor node + actuator node) is described in [`firmware/fermentatore_v7/README.md`](firmware/fermentatore_v7/README.md)
+and [`firmware/fermentatore_v7/CHANGELOG.md`](firmware/fermentatore_v7/CHANGELOG.md).
 The legacy v2–v5 line is described in [`firmware/obsolete/README.md`](firmware/obsolete/README.md).
 
 ---

@@ -5,7 +5,8 @@ vedi nota sotto
 **Scopo**: standardizzare toolchain, automazioni e check gate per `fermentatore_v6`.
 
 > **Attenzione — il manifest è disallineato dal firmware reale.** `v6_manifest.json` dichiara
-> `firmware_version: 6.1.4`, ma il firmware reale (`fermentatore_v6/config.h`) è alla 6.3.0. Il
+> `firmware_version: 6.1.4`, ma il firmware reale (`fermentatore_v6/config.h`) è alla 6.5.1 (2026-11-02; la V7 in
+> `fermentatore_v7/` ha le sue versioni e nessun manifest). Il
 > generator/verifier (§1-2) controllano solo che `generated/v6_build_info.*` sia coerente col
 > manifest: **non leggono né scrivono `FIRMWARE_VERSION` in `config.h`**, quindi non si accorgono
 > del disallineamento. La versione reale del firmware segue una policy separata e più semplice,

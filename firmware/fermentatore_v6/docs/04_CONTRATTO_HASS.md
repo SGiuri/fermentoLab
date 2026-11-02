@@ -139,6 +139,16 @@ Note sui campi (firmware 6.2.0):
   entro 5 s da una commutazione di un relè (sottoinsieme di `non_valide`); `power_cycle` = cicli di
   alimentazione del sensore. Le letture scartate non arrivano mai in `temp_reale`: solo questi contatori
   le rendono visibili. Assente con firmware < 6.4.1.
+- `stima` (firmware >= 6.5.0): regolazione stimata con sensore perso (`regolazione_stimata.h`).
+  `pronta` = stima del carico disponibile (servono 2 h contigue di controllo normale); `attiva` = relè
+  pilotati dalla stima perché il DS18B20 è perso; `scaduta` = superate 72 h cumulative, relè spenti;
+  `freddo`/`caldo` = duty [%] che la stima applica (o applicherebbe) al setpoint corrente su finestre di
+  40 min; `ore` = ore cumulative di regolazione stimata (sopravvivono ai riavvii software, si azzerano al
+  ritorno del sensore); `u_freddo`/`u_caldo` [%], `t_media` [°C], `pendenza` [°C/h], `blocchi` (da 15 min)
+  = apprendimento sulle ultime 2-4 h. Con `attiva` il profilo continua ad avanzare.
+  Esempio: `"stima":{"pronta":true,"attiva":false,"scaduta":false,"freddo":8.0,"caldo":0.0,"ore":0.00,
+  "u_freddo":8.0,"u_caldo":0.0,"t_media":19.25,"pendenza":-0.019,"blocchi":16}`. Con questo oggetto
+  `esp/state` arriva a ~1050 byte (buffer 1280, MQTT 4096).
 - `reset_reason`: `poweron | software | panic | task_wdt | int_wdt | wdt | brownout | external | deepsleep | other`.
 
 Valori possibili `control_mode`: `on_off | on_off_hyst_sym | on_off_hyst_asym |
@@ -240,7 +250,11 @@ Dal firmware 6.2.0 il LWT **non** è più su questo topic: vedi `esp/availabilit
 
 Valori `tipo`: `sensore_instabile` (nessuna lettura valida da 20 s, relè OFF) |
 `sensore_offline` (dopo `durata_minuti`) | `recovery_sensore` | `riavvio_in_corso` |
-`riavvio_sospeso` (sensore guasto dopo 3 riavvii: resta in allarme senza riavviare)
+`riavvio_sospeso` (sensore guasto dopo 3 riavvii: resta in allarme senza riavviare).
+Dal firmware 6.5.0: `regolazione_stimata` (sensore perso, relè pilotati dalla stima del carico) |
+`fine_regolazione_stimata` (sensore tornato) | `regolazione_stimata_non_disponibile` (sensore perso
+senza stima: relè OFF come prima) | `regolazione_stimata_scaduta` (oltre 72 h: relè OFF). Con
+`regolazione_stimata` attiva, `sensore_instabile` non significa più "relè OFF".
 
 ### 2.4 esp/autotune_state
 

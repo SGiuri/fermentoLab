@@ -1,6 +1,6 @@
 # 10. Punti aperti e idee — V6 (F1 e F2)
 
-**Versione documento**: 1.4 (2026-09-19) · **Stato**: elenco vivo — aggiungere qui, non in chat, ogni
+**Versione documento**: 1.5 (2026-11-02) · **Stato**: elenco vivo — aggiungere qui, non in chat, ogni
 volta che emerge qualcosa da fare o da valutare, con la data.
 
 Riferimenti: [00_INDICE.md](00_INDICE.md) (indice di tutti i documenti V6),
@@ -39,34 +39,69 @@ validato con i test host e col simulatore offline, pronto per il flash.
 - [ ] Quando arrivano le funzioni di collaudo 6.5.0 per il sensore (§3), estendere
   `sensore_breve`/`sensore_lungo` per esercitare anche il caso rampa, non solo la tenuta. Vedi
   [11_TIMING_PROFILO.md §6.3](11_TIMING_PROFILO.md#63-test-proposto-guasto-del-sensore-durante-una-rampa-estensione-di-sensore_brevesensore_lungo).
-- [ ] Flash di 6.4.2 (= 6.4.1 + diagnostica dei reset `esp/diag`, = 6.4.0 + contatori del sensore) e ripetizione *selettiva* dei test alla luce del nuovo setup, al prossimo accesso a F1 — vedi §1.
+- [x] Flash della 6.4.2 su F1 (settembre), poi 6.5.0 il 2026-10-01, 6.5.1 il 02/10 e, dal 2026-10-28, il nodo
+  attuatori V7 7.0.0 (§1b). La ripetizione *selettiva* dei test di §1 non risulta fatta.
 
-## 1. Prima del 3 ottobre (bloccanti, solo F1)
+## 1. Collaudo prima della birra (scadenza del 3 ottobre superata)
+
+> **Stato al 2026-11-02.** F1 è andato in produzione il 2026-10-02 (lager, poi dal 23/10 witbier, vedi §1b) senza
+> che nel repository risulti la chiusura della Fase A o la ripetizione selettiva dei test. Le voci qui sotto
+> restano aperte: valgono per il prossimo fermentatore vuoto (F1 a fine witbier, o F2 quando avrà i relè).
 
 - [ ] **Guasto hardware: reset dell'ESP32 alla commutazione della pompa** (pompa 220 V, 10-15 W, sulla
-  scheda relè). Osservato 4 volte in ~30 commutazioni, sempre 0,7-4,7 s dopo lo spegnimento. Utente sta
-  provando un condensatore tra EN e GND. Se non basta: snubber RC (100 Ω + 100 nF X2) o varistore sulla
-  pompa; alimentazione separata per il modulo relè. **Verifica**: rilanciare il test `stress_pompa` (circa
-  1 ora) dopo ogni intervento. Vedi [06_COLLAUDO_F1.md §7](06_COLLAUDO_F1.md#7-risultati-della-prima-sessione-fase-a-avviata-2026-09-18-2350-fw-630).
-- [ ] **Concludere la Fase A su 6.3.0** (in corso dal 2026-09-19 13:47, fine stimata martedì 22/09
-  notte): `diacetile`, `rampa`, i quattro modi di controllo, `cold_crash`, `allarme_freddo`. Si
-  interrompe comunque al flash di lunedì: i test non finiti si rilanciano dopo.
-- [ ] **Dopo il flash di 6.4.2 e l'intervento hardware, ripetere solo alcuni test, non tutta la Fase
-  A**: `riavvio`, `rampa`, `stress_pompa` (subito dopo l'intervento), `corrente` nella variante in
-  rampa, `lager` come prova rapida — motivazioni test per test in
-  [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md#quali-test-ripetere-dopo-il-flash-della-640-e-lintervento-hardware).
-  Il profilo attivo su F1 va perso al primo boot in 6.4.0 (layout NVS cambiato, vedi §0), come previsto
-  quando cambia il blob (`profilo.h`).
-- [ ] **Scrivere il firmware 6.5.0** con le funzioni di collaudo (vedi §3) — non blocca il 3 ottobre,
-  la 6.4.0 (timing del profilo, pronta) può essere flashata prima: il codice dei test B
-  (`TestFirmware64` in `collaudo_motore.py`) è già scritto come segnaposto, con descrizione e criteri,
-  ma restituisce sempre "non applicabile" finché il firmware installato non è almeno 6.5.0.
-- [ ] **Test manuale della mancanza di corrente**: va eseguito durante la stessa visita (serve comunque la
-  presenza per il flash). Ricordarsi di avviarlo dalla dashboard *prima* di intervenire, altrimenti l'app
-  non registra l'evento.
-- [ ] Decidere se il verdetto "pronto per la birra" deve essere dato da tutti i test A+B, o se un
-  sottoinsieme è sufficiente il 3 ottobre e il resto si completa dopo (per esempio: i test dei modi di
-  controllo non sono indispensabili se in produzione si userà solo on/off).
+  scheda relè). Osservato 4 volte in ~30 commutazioni, sempre 0,7-4,7 s dopo lo spegnimento. Il 19/09 l'utente
+  provava un condensatore tra EN e GND: **l'esito non è registrato**. Se non basta: snubber RC (100 Ω + 100 nF
+  X2) o varistore sulla pompa; alimentazione separata per il modulo relè. Con la V7 le sonde non sono più sulla
+  scheda dei relè, ma un reset del WROOM ferma comunque la regolazione per qualche secondo. **Verifica**:
+  `stress_pompa` (circa 1 ora, numero di cicli scelto all'avvio dal motore 1.4.0) e le entità `esp/diag` della
+  6.4.2. Vedi [06_COLLAUDO_F1.md §7](06_COLLAUDO_F1.md#7-risultati-della-prima-sessione-fase-a-avviata-2026-09-18-2350-fw-630).
+- [ ] **Fase A del collaudo**: avviata il 2026-09-19 su 6.3.0. Restavano `diacetile`, `rampa`, i quattro modi di
+  controllo, `cold_crash` e `allarme_freddo`. Rilanciarla sul firmware in uso (oggi V7 7.0.0) a fermentatore
+  vuoto, con almeno `riavvio`, `rampa`, `stress_pompa`, `corrente` in rampa e `lager`: motivazioni test per test in
+  [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md#quali-test-ripetere-dopo-il-flash-della-640-e-lintervento-hardware). Con la
+  V7 va aggiunto un test della sorgente remota: nodo sensori spento o muto (relè in sicurezza dopo 30 s, allarme
+  `sensore_offline` dopo 5 min, poi regolazione stimata).
+- [ ] **Funzioni di collaudo nel firmware** (test del gruppo B, §3): non ancora scritte. `TestFirmware64` in
+  `collaudo_motore.py` ha `fw_min = "6.5.0"`, ma il suo `avvia()` restituisce sempre "non applicabile", quindi
+  anche con la 7.0.0 non esegue nulla. Alzare `fw_min` alla versione che le conterrà.
+- [ ] **Test manuale della mancanza di corrente**: da avviare dalla dashboard *prima* di togliere corrente,
+  altrimenti l'app non registra l'evento.
+- [ ] Decidere se il verdetto "pronto per la birra" deve essere dato da tutti i test A+B o da un sottoinsieme
+  (per esempio: i test dei modi di controllo non servono se in produzione si usa solo on/off, come oggi).
+
+## 1b. Produzione e V7 (dal 2026-10-02)
+
+Cronologia: [`../storico_birre/`](../storico_birre/) (una scheda per birra) e
+[`../../fermentatore_v7/README.md`](../../fermentatore_v7/README.md).
+
+- **Lager di ottobre** (cerveza especial): inoculata il 02/10 in F1 e regolata da un Inkbird dopo i guasti della
+  sonda dell'1-2/10. Il 03/10 l'ESP32 di F1 è stato messo in pausa: i suoi relè pilotavano un altro recipiente. Dal 17/10 in HA è F2 (dashboard
+  *F2 Cotta*, nessun allarme per scelta). In lagerizzazione, imbottigliamento previsto **sabato 2026-11-28 alle
+  10**.
+- **Witbier WB-06**: in F1 dal 23/10, regolata dall'ESP32 (on/off, isteresi ±0,5 °C). Il 30/10 il cold crash è
+  stato rimandato (WB-06 diastaticus): 22 °C fino a **giovedì 2026-11-05 alle 16**, poi rampa lenta a 6 °C in 3
+  giorni, solo con due letture del densimetro uguali a 48 h. Imbottigliamento previsto il 28/11 insieme alla
+  lager.
+- [x] **Sonda di F1 persa** (01-02/10, 25-27/10): la 6.5.0 ha aggiunto la regolazione stimata, la 6.5.1 il
+  power-cycle con VDD e DQ a massa. Il 26/10, con la sonda intermittente, la stima ripartiva ogni volta con la
+  pompa accesa e la birra è scesa a 12,1 °C. È stato corretto nella 7.0.0 e la V7 ha spostato le sonde sul nodo
+  sensori S3: dal 28/10 il WROOM di F1 ha la 7.0.0. Da verificare nella dashboard *V7 Nodo sensori* se
+  le letture scartate sono davvero sparite: il 30/10 la rampa è partita 34 min dopo il piano "per le pause della
+  sonda".
+- [ ] **Causa della perdita della sonda sulla scheda V6** mai accertata. Sospetto: VDD sui 3,3 V fissi invece che
+  su GPIO25, quindi il power-cycle non spegneva davvero la sonda. Da verificare prima di riusare quella scheda
+  con una sonda locale (`SORGENTE_TEMPERATURA_REMOTA 0`).
+- [ ] **Nodo attuatori V7 a 4 relè** (pompa e fascia di F1 e di F2): fase 4 del README V7, da scrivere. Serve a
+  dare a F2 una regolazione vera al posto dell'Inkbird. Il chiller a glicole è condiviso: il 23/10, mentre
+  raffreddava il mosto della witbier, la lager è salita da 1,3 a 4,5 °C. La logica a due fermentatori deve
+  tenerne conto (priorità, o almeno un allarme).
+- [ ] **Chiller sotto i 4 °C**: con la pompa dell'Inkbird sempre accesa il glicole non scende sotto 3-4 °C, quindi
+  la lagerizzazione è stata portata a 4 °C e il freddo della witbier a 6 °C. Da rivedere se si vogliono
+  lagerizzazioni più fredde.
+- [ ] **iSpindel muto in F2** (dal 15/10, segnale −86 dBm e recipiente avvolto): la densità della lager si legge
+  a mano. Consiglio rimasto: isolare solo i lati, lasciando scoperto il coperchio.
+- [ ] **Storico birre**: le note aggiunte dalla dashboard finiscono in `/config/storico_birre/` sul Lab. Le copie
+  nel repository vanno riallineate a mano (come i profili, §0).
 
 ## 2. Secondo fermentatore F2 — guida di onboarding da scrivere
 
@@ -101,14 +136,21 @@ documento, per esempio `11_ONBOARDING_F2.md`) che copra almeno:
   `_laboratorio`/`_collaudo` (oggi generati/scritti solo per F1: `_collaudo` è escluso di proposito da
   `genera_f2.py`, vedi [06_COLLAUDO_F1.md](06_COLLAUDO_F1.md) e §4 sotto).
 - [ ] **Dashboard**: F1 ha "F1 Laboratorio" e "F1 Collaudo" dedicate; decidere se F2 avrà le sue
-  dashboard analoghe, una dashboard multi-fermentatore condivisa, o entrambe.
+  dashboard analoghe, una dashboard multi-fermentatore condivisa, o entrambe. Dal 2026-10-17 F2 ha già
+  **F2 Cotta** (`f2_v6_cotta_dashboard.yaml`, pacchetti `_f2_cotta` e `_f2_cotta_ispindel`): segue una birra
+  senza ESP32 (Inkbird + iSpindel), vedi [05 §5](05_HOME_ASSISTANT_F1.md#5-dashboard). Quando F2 avrà la sua
+  scheda, la vista Cotta di F2 andrà portata su sonda e setpoint come quella di F1.
 - [ ] **Collaudo**: il motore di collaudo (`collaudo_motore.py`) oggi ha gli `entity_id` di F1 scritti
   nel dizionario `E{}`: per collaudare F2 serve parametrizzarlo per fermentatore (non è un lavoro
   grande, ma va fatto prima di poter riusare la suite su F2).
 - [ ] **Criterio di accettazione**: la stessa checklist di collaudo di F1 (o una versione aggiornata)
   va superata anche da F2 prima di mettere birra nel secondo fermentatore.
 
-## 3. Firmware 6.5.0 — funzioni di collaudo da implementare
+## 3. Firmware con le funzioni di collaudo da implementare (previsto come 6.5.0, ora successivo)
+
+> Il 2026-10-01 il numero 6.5.0 è andato alla **regolazione stimata con sensore perso** (CHANGELOG). Le funzioni
+> di collaudo arriveranno in una versione successiva: `fw_min = "6.5.0"` in `TestFirmware64` va alzato insieme,
+> intanto quei test restano comunque "non applicabili" perché il segnaposto non esegue nulla.
 
 Serve un comando o una modalità che duri un tempo limitato e scada da sola (mai lasciare F1 permanentemente
 più fragile). Proposta: comandi `ha/cmd/test_*` accettati solo con `input_select.f1_v6_modalita = Collaudo`
@@ -176,15 +218,18 @@ lato firmware (o un flag equivalente), con timeout massimo e log distinguibile d
 
 ## 7. Repository e processo
 
-- [ ] Valutare quando unire `v6.3.0-didattica` in `main` (stato al 2026-09-19: `main` fermo a `41599db`,
-  `v6.3.0-didattica` avanti di vari commit su didattica, collaudo e riordino della documentazione).
+- [x] Unire `v6.3.0-didattica` in `main`: superato. Dal 2026-09-20 il repository pubblico ha solo `main`.
+- [ ] **Committare con regolarità**: tra il 2026-09-20 (6.4.2) e il 2026-11-02 tutto il lavoro (6.5.0, 6.5.1,
+  V7, dashboard Cotta, storico birre) è rimasto solo nella cartella di Google Drive. Google Drive mette anche dei
+  `desktop.ini` dentro `.git/refs/` ("ignoring broken ref"): non fanno danni, ma vanno tolti se un comando git
+  si lamenta.
 - [ ] I file generati (`fermentatore_v6_f2_*.yaml`, `f1_v6_collaudo_dashboard.yaml`) sono committati:
   ricordarsi di rigenerarli (`genera_f2.py`, `genera_collaudo.py`) a ogni modifica dei sorgenti, altrimenti
   il file nel Lab diverge da quello nel repository.
 - [ ] Nessun MCP server (github, slack, ecc.) è attualmente autorizzato in questa sessione: da attivare via
   connettori claude.ai o `/mcp` se si vuole automatizzare PR o notifiche.
 - [ ] **`v6_manifest.json` disallineato dal firmware reale** (dichiara `firmware_version: 6.1.4`, il
-  firmware reale è 6.3.0): la toolchain `generate_build_info.ps1`/`verify_build_info.ps1` non legge né
+  firmware reale è 6.5.1 per la v6 e 7.0.0 sul WROOM di F1). Il manifest copre solo la v6: la toolchain `generate_build_info.ps1`/`verify_build_info.ps1` non legge né
   scrive `config.h`, quindi non se ne accorge. Decidere se: (a) aggiornare il manifest a ogni bump di
   versione, (b) far leggere/scrivere davvero `config.h` a questi script, o (c) rimuovere questa toolchain
   se il processo manuale (CHANGELOG → `config.h`/`display.cpp`/`connettivita.cpp`) basta. Vedi
@@ -193,10 +238,8 @@ lato firmware (o un flag equivalente), con timeout massimo e log distinguibile d
   con quei nomi (`HASS_CONFIGURATORE_V6.md`, `HASS_MONITORAGGIO_V6.md`) e non è mai stato aggiornato dopo
   il 2026-05-25: valutare se archiviarlo o riscriverlo per riflettere lo stato attuale (il changelog vivo
   è `fermentatore_v6/CHANGELOG.md`).
-- [ ] `README.md` in radice descrive ancora v4/v5 come sistema principale, con topic MQTT dello schema
-  vecchio (`fermentazione/f1/...` invece di `fermentazione/v6/f1/...`). È stato aggiornato il minimo
-  indispensabile (percorsi dopo lo spostamento in `obsolete/`, link rotti) il 2026-09-19: una revisione
-  completa che lo centri su V6 resta da fare.
+- [x] `README.md` in radice riscritto su V6 il 2026-09-20 (il vecchio README v2-v5 è `firmware/obsolete/README.md`),
+  aggiornato con la V7 il 2026-11-02.
 
 ## 8. Idee non urgenti
 

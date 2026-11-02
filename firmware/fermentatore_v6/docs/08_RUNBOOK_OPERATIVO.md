@@ -27,6 +27,9 @@ Procedure sintetiche per deploy, smoke test, rollback e incident response. Per i
 1. Build del target (Arduino IDE, board ESP32 Dev Module per WROOM).
 2. Flash: via USB, oppure via OTA solo connettendo il PC all'hotspot definito in `secrets.h`
    (la rete IoT aziendale/domestica blocca l'OTA) — l'ESP32 sceglie l'hotspot solo al boot.
+   **Mai il file `merged.bin`** su un ESP32 con un profilo in corso: sovrascrive la NVS. Dal 2026-10-28 F1 ha
+   il nodo attuatori V7: ordine del flash (prima il nodo sensori, poi gli attuatori), controlli e ritorno alla
+   6.5.1 in [`../../fermentatore_v7/README.md`](../../fermentatore_v7/README.md#flash-del-2026-10-28).
 3. Verifica: `esp/availability` = `online`, primo `esp/state` retained ricevuto, heartbeat ogni 30 s.
 4. Ripeti per l'altro fermentatore, se presente (oggi solo F1 ha hardware — vedi
    [10_PUNTI_APERTI.md](10_PUNTI_APERTI.md) per l'onboarding di F2).
