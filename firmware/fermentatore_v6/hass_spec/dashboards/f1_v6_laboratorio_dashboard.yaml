@@ -2,6 +2,9 @@
 # Dashboard "F1 Laboratorio" — Fermentatore V6 F1, firmware >= 6.3.0
 # Richiede i pacchetti fermentatore_v6_f1_entita / _allarmi / _laboratorio e le card
 # mushroom, apexcharts-card, card-mod, state-switch.
+# Dal 2026-10-17 l'iSpindel (sensor.ispindel_01_*, pacchetto ispindel_01 del progetto DensityMeter) è nella
+# lager passata in F2 (dashboard F2 Cotta): i grafici di F1 non lo mostrano più; la card della Panoramica
+# ricompare con input_boolean.f1_ispindel_presente acceso.
 #
 # Viste: Panoramica · Laboratorio (controllore dal vivo) · Esperimenti (gradino e metriche)
 #        · Fermentazione (avvio, pausa, stop) · Diagnostica.
@@ -51,6 +54,16 @@ views:
               icon: mdi:thermometer-off
               icon_color: red
               content: Sensore guasto
+          # Dal 2026-10-28 la sonda di F1 è sul nodo sensori V7 (ESP32-S3): senza il nodo l'ESP32 regola alla cieca.
+          - type: conditional
+            conditions:
+              - entity: binary_sensor.v7_sensori_online
+                state_not: "on"
+            chip:
+              type: template
+              icon: mdi:access-point-network-off
+              icon_color: red
+              content: Nodo sensori offline
           - type: template
             icon: mdi:chip
             icon_color: grey
@@ -238,6 +251,37 @@ views:
             stroke_width: 0
             transform: "return x === 'on' ? 1 : 0;"
 
+      # ── iSPINDEL: densità e seconda temperatura ──────────────────────────
+      # Solo con input_boolean.f1_ispindel_presente acceso (dal 2026-10-17 l'iSpindel è nella lager in F2).
+      # La taratura è nella dashboard dell'iSpindel: qui fuori da 0,980–1,150 la densità non viene mostrata.
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.f1_ispindel_presente
+            state: "on"
+        card:
+          type: custom:mushroom-template-card
+          primary: >-
+            {% set sg = states('sensor.ispindel_01_densita') | float(none) %}
+            {% if sg is none %}iSpindel senza dati
+            {% elif 0.98 <= sg <= 1.15 %}SG {{ '%.3f' | format(sg) }}
+            {%- set att = states('sensor.ispindel_01_attenuazione_apparente') | float(none) %}
+            {%- if att is not none and 0 <= att <= 100 %} · attenuazione {{ att | round(0) | int }} %{% endif %}
+            {% else %}Densità da tarare{% endif %}
+          secondary: >-
+            {% set ti = states('sensor.ispindel_01_temperatura') | float(none) %}
+            {% set tf = states('sensor.f1_v6_temperatura') | float(none) %}
+            {% if ti is none %}Temperatura iSpindel non disponibile{% else %}T iSpindel {{ ti | round(1) }} °C
+            {%- if tf is not none %} · {{ '%+.1f' | format(ti - tf) }} °C rispetto alla sonda F1{% endif %}{% endif %}
+          icon: mdi:beer
+          icon_color: >-
+            {% set sg = states('sensor.ispindel_01_densita') | float(none) %}
+            {{ 'brown' if sg is not none and 0.98 <= sg <= 1.15 else 'disabled' }}
+          multiline_secondary: true
+          tap_action:
+            action: more-info
+            entity: sensor.ispindel_01_densita
+
       - type: custom:mushroom-template-card
         primary: "{{ states('sensor.f1_v6_profilo') }} — {{ states('sensor.f1_v6_step') }}"
         secondary: >-
@@ -249,6 +293,486 @@ views:
         tap_action:
           action: navigate
           navigation_path: fermentazione
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # COTTA — dall'inizio della fermentazione a oggi, e il piano completo
+  # Dal 2026-10-17 segue la sonda e il setpoint dell'ESP32, senza iSpindel: la lager di ottobre, con
+  # l'iSpindel e l'Inkbird, è passata in F2 (dashboard f2_v6_cotta_dashboard.yaml, che ha la stessa vista
+  # con l'iSpindel; le funzioni JS sono copie identiche, se ne correggi una correggi anche l'altra).
+  # Dati nel pacchetto fermentatore_v6_f1_cotta; avviando un profilo da file nella vista Fermentazione
+  # inizio e profilo si copiano da soli. Il piano si calcola dal file del profilo e dall'ora
+  # di inizio, non dall'ESP32: vale anche quando la temperatura la tiene un regolatore esterno.
+  # Le misure vengono dalle statistiche (5 minuti nei primi 9 giorni, poi orarie): lo storico grezzo
+  # dura solo 10 giorni. config-template-card calcola la finestra e ridisegna ogni ora
+  # (sensor.f1_cotta_ore); nel codice dei grafici niente template literal JS, li interpreterebbe lui.
+  # ══════════════════════════════════════════════════════════════════════════
+  - title: Cotta
+    path: cotta
+    icon: mdi:glass-mug-variant
+    type: panel
+    cards:
+      - type: vertical-stack
+        cards:
+
+          # ── TEMPERATURE: dall'inizio a ora ──────────────────────────────
+          - type: custom:config-template-card
+            entities:
+              - input_datetime.f1_cotta_inizio
+              - sensor.f1_cotta_ore
+              - sensor.f1_cotta_piano
+            variables:
+              SPAN: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                var m = t0 > 0 ? Math.ceil((Date.now() - t0) / 60000) : 0;
+                return (m >= 60 ? m : 1440) + 'min'; })()
+              PERIODO: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                return (Date.now() - t0) < 9 * 86400000 ? '5minute' : 'hour'; })()
+              # Griglia dell'asse x dei grafici della vista dall'inizio a ora (il piano completo ha GIORNI). Oltre i 2 giorni di finestra
+              # ApexCharts mette un'etichetta al giorno e non ha opzioni per infittirla, quindi GRIGLIA(fine)
+              # restituisce annotazioni dall'inizio della cotta a `fine`: una linea tratteggiata ogni 3 ore
+              # (più scura a mezzanotte) con l'ora nella riga delle date. L'id griglia-3/6/12/24 dice il passo
+              # più lungo di cui l'ora è multiplo; quali mostrare lo decide griglia_adatta, sotto.
+              GRIGLIA: &griglia_cotta >-
+                (function (fine) {
+                var a = states['input_datetime.f1_cotta_inizio'];
+                var da = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                var linee = [];
+                if (!(da > 0) || !(fine > da)) return linee;
+                for (var g = new Date(da); g.setHours(0, 0, 0, 0) <= fine + 3600000; g.setDate(g.getDate() + 1)) {
+                  for (var h = 0; h < 24; h += 3) {
+                    var x = new Date(g.getFullYear(), g.getMonth(), g.getDate(), h).getTime();
+                    if (x < da || x > fine + 3600000) continue;
+                    linee.push({ id: 'griglia-' + (h === 0 ? 24 : h % 12 === 0 ? 12 : h % 6 === 0 ? 6 : 3),
+                      x: x, strokeDashArray: 3,
+                      borderColor: h === 0 ? 'rgba(137,135,129,0.8)' : 'rgba(137,135,129,0.35)',
+                      label: { text: h ? (h < 10 ? '0' : '') + h + ':00' : '', orientation: 'horizontal',
+                        position: 'bottom', offsetY: 24, borderWidth: 0,
+                        style: { color: '#898781', background: 'transparent', fontSize: '12px' } } });
+                  }
+                }
+                return linee; })
+            card:
+              type: custom:apexcharts-card
+              graph_span: "${SPAN}"
+              update_interval: 5min
+              header:
+                show: true
+                title: Temperature dall'inizio della fermentazione
+                show_states: true
+                colorize_states: true
+              apex_config:
+                chart:
+                  height: 320
+                  # Dopo ogni disegno (anche al ridimensionamento della finestra) sceglie, dalle posizioni dei
+                  # testi disegnati e dalla loro larghezza (misurata con un canvas), il passo più fitto (3, 6, 12,
+                  # 24 ore) con almeno 12 px tra le linee e quello (3, 6, 12 ore) con cui le ore non toccano né
+                  # altre ore né le date di ApexCharts; se non ce n'è uno nasconde tutte le linee o tutte le ore.
+                  # Le ore che uscirebbero dal grafico non si mostrano mai. Sotto i 2 giorni le ore le scrive
+                  # già ApexCharts, e le nostre spariscono perché si sovrappongono alle sue.
+                  events:
+                    mounted: &griglia_adatta >-
+                      EVAL:function (chart) {
+                      var el = chart.el, larghezza = chart.w.globals.gridWidth;
+                      if (!el || !(larghezza > 0)) return;
+                      var passi = [3, 6, 12, 24];
+                      var tutti = function (sel) { return [].slice.call(el.querySelectorAll(sel)); };
+                      var dal = function (tag, p, max) {
+                        return passi.filter(function (q) { return q >= p && q <= max; })
+                          .reduce(function (s, q) { return s.concat(tutti(tag + '.griglia-' + q)); }, []); };
+                      var x = function (n, attr) { return parseFloat(n.getAttribute(attr)); };
+                      var tela = document.createElement('canvas').getContext('2d');
+                      var testo = function (n) { return (n.querySelector('tspan') || n).textContent.trim(); };
+                      var box = function (n, nostra) {
+                        tela.font = (n.getAttribute('font-size') || '12px') + ' ' + (n.getAttribute('font-family') || 'sans-serif');
+                        var m = tela.measureText(testo(n)).width / 2;
+                        return [x(n, 'x') - m, x(n, 'x') + m, nostra]; };
+                      var dentro = function (b) { return b[0] >= 0 && b[1] <= larghezza; };
+                      var riga = passi.find(function (p) {
+                        var xs = dal('line', p, 24).map(function (n) { return x(n, 'x1'); })
+                          .sort(function (a, b) { return a - b; });
+                        for (var i = 1; i < xs.length; i++) if (xs[i] - xs[i - 1] < 12) return false;
+                        return true; });
+                      var date = tutti('text.apexcharts-xaxis-label').filter(testo)
+                        .map(function (n) { return box(n, false); })
+                        .filter(function (b) { return b[1] > 0 && b[0] < larghezza; });
+                      var ogni = [3, 6, 12].find(function (p) {
+                        var ore = dal('text', p, 12).map(function (n) { return box(n, true); }).filter(dentro);
+                        var insieme = ore.concat(date).sort(function (a, b) { return a[0] - b[0]; });
+                        for (var i = 1; i < insieme.length; i++)
+                          if ((insieme[i][2] || insieme[i - 1][2]) && insieme[i][0] < insieme[i - 1][1] + 6) return false;
+                        return ore.length > 0; });
+                      passi.forEach(function (p) {
+                        tutti('line.griglia-' + p).forEach(function (n) { n.style.display = riga && p >= riga ? '' : 'none'; });
+                        tutti('text.griglia-' + p).forEach(function (n) {
+                          n.style.display = ogni && p >= ogni && p < 24 && dentro(box(n, true)) ? '' : 'none'; }); }); }
+                    updated: *griglia_adatta
+                legend:
+                  show: true
+                annotations:
+                  xaxis: "${GRIGLIA(Date.now())}"
+              yaxis:
+                - decimals: 1
+                  apex_config:
+                    forceNiceScale: true
+              series:
+                - entity: sensor.f1_v6_temperatura
+                  name: T sonda F1
+                  color: "#e34948"
+                  stroke_width: 2
+                  float_precision: 1
+                  statistics:
+                    type: mean
+                    period: "${PERIODO}"
+                  show:
+                    legend_value: false
+                # Il setpoint che l'ESP32 sta inseguendo: se il profilo è lo stesso del piano, le due linee coincidono.
+                - entity: sensor.f1_v6_setpoint
+                  name: Setpoint ESP32
+                  color: "#1a3f8f"
+                  stroke_width: 2
+                  stroke_dash: 3
+                  curve: stepline
+                  float_precision: 1
+                  statistics:
+                    type: mean
+                    period: "${PERIODO}"
+                  show:
+                    legend_value: false
+                - entity: sensor.f1_cotta_temperatura_piano
+                  name: Piano
+                  color: "#2a78d6"
+                  stroke_width: 2
+                  curve: straight
+                  float_precision: 1
+                  show:
+                    legend_value: false
+                  data_generator: &piano_cotta |
+                    // Spezzata del piano come calcolaSetpoint() nel firmware: le rampe partono dalla
+                    // temperatura dello step precedente; finito il profilo resta l'ultima (HOLDING).
+                    const a = hass.states['input_datetime.f1_cotta_inizio'];
+                    const t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                    const piano = hass.states['sensor.f1_cotta_piano'];
+                    const passi = (piano && piano.attributes.profilo) || [];
+                    if (!t0 || !passi.length) return [];
+                    const punti = [];
+                    let t = t0;
+                    let prec = passi[0].temp;
+                    for (const p of passi) {
+                      const rampa = p.ramp_days != null || p.ramp_hours != null;
+                      const ore = p.ramp_days != null ? p.ramp_days * 24
+                        : p.ramp_hours != null ? p.ramp_hours
+                        : p.duration_days != null ? p.duration_days * 24 : (p.duration_hours || 0);
+                      punti.push([t, rampa ? prec : p.temp]);
+                      t += ore * 3600000;
+                      punti.push([t, p.temp]);
+                      prec = p.temp;
+                    }
+                    const da = Math.max(start.getTime(), t0);
+                    const fino = end.getTime();
+                    if (fino <= da) return [];
+                    punti.push([Math.max(t, fino), prec]);
+                    const valore = (x) => {
+                      for (let i = 1; i < punti.length; i++) {
+                        if (x <= punti[i][0]) {
+                          const [x0, y0] = punti[i - 1];
+                          const [x1, y1] = punti[i];
+                          return x1 > x0 ? y0 + (y1 - y0) * (x - x0) / (x1 - x0) : y1;
+                        }
+                      }
+                      return prec;
+                    };
+                    return [[da, valore(da)]]
+                      .concat(punti.filter((q) => q[0] > da && q[0] < fino))
+                      .concat([[fino, valore(fino)]]);
+                - entity: sensor.f1_cotta_setpoint_inkbird_storico
+                  name: Inkbird
+                  color: "#c98500"
+                  stroke_width: 2
+                  stroke_dash: 6
+                  curve: stepline
+                  float_precision: 1
+                  statistics:
+                    type: mean
+                    period: "${PERIODO}"
+                  show:
+                    legend_value: false
+
+          # ── PIANO: dove siamo e cosa viene dopo ─────────────────────────
+          - type: markdown
+            content: |
+              {%- set t0 = state_attr('input_datetime.f1_cotta_inizio', 'timestamp') %}
+              {%- set passi = state_attr('sensor.f1_cotta_piano', 'profilo') or [] %}
+              {%- if t0 is not number or passi | count == 0 %}
+              Nessuna cotta in F1. Avviando un profilo da file nella vista **Fermentazione**, inizio e profilo si
+              compilano da soli; con un regolatore esterno impostali in **Dati della cotta**, qui sotto.
+              {%- else %}
+              {%- set ora = now().timestamp() %}
+              {%- set ns = namespace(t=t0, prec=passi[0].temp, righe='', step=none, fine=none, adesso=none, prossimo=none) %}
+              {%- for p in passi %}
+                {%- set rampa = p.ramp_days is defined or p.ramp_hours is defined %}
+                {%- set ore = p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                              else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0) %}
+                {%- set fine = ns.t + ore * 3600 %}
+                {%- set corrente = ns.t <= ora < fine %}
+                {%- if rampa and ore > 0 %}
+                  {%- set temp = '%.1f → %.1f °C (%+.1f °C al giorno)' | format(ns.prec, p.temp, (p.temp - ns.prec) / ore * 24) %}
+                {%- else %}
+                  {%- set temp = '%.1f °C' | format(p.temp) %}
+                {%- endif %}
+                {%- if ns.step is not none and ns.prossimo is none %}{% set ns.prossimo = p.step ~ ', ' ~ temp %}{% endif %}
+                {%- if corrente %}
+                  {%- set ns.step = p.step %}
+                  {%- set ns.fine = fine %}
+                  {%- set ns.adesso = ns.prec + (p.temp - ns.prec) * (ora - ns.t) / (fine - ns.t) if rampa else p.temp %}
+                {%- endif %}
+                {%- set nome = '▶ **' ~ p.step ~ '**' if corrente else p.step %}
+                {%- set ns.righe = ns.righe ~ '\n| ' ~ nome ~ ' | ' ~ ns.t | timestamp_custom('%d/%m %H:%M') ~ ' | '
+                                   ~ fine | timestamp_custom('%d/%m %H:%M') ~ ' | ' ~ temp ~ ' |' %}
+                {%- set ns.prec = p.temp %}
+                {%- set ns.t = fine %}
+              {%- endfor %}
+              {%- set ink = states('input_number.f1_cotta_inkbird') | float(0) %}
+              ### Piano: {{ states('input_text.f1_cotta_profilo') }}
+
+              {% if ora < t0 -%}
+              La fermentazione inizia il {{ t0 | timestamp_custom('%d/%m %H:%M') }}.
+              {%- elif ns.step is none -%}
+              **Piano finito** il {{ ns.t | timestamp_custom('%d/%m %H:%M') }}: resta a {{ '%.1f' | format(ns.prec) }} °C.
+              {%- else -%}
+              **Giorno {{ ((ora - t0) / 86400) | int + 1 }}** · {{ ns.step }} · piano **{{ '%.1f' | format(ns.adesso) }} °C**
+              {%- if is_state('sensor.f1_v6_fsm', 'RUNNING') and has_value('sensor.f1_v6_setpoint') %} · ESP32
+              {{ '%.1f' | format(states('sensor.f1_v6_setpoint') | float) }} °C{% endif %}
+              {%- if ink > 0 %} · Inkbird {{ '%.1f' | format(ink) }} °C{% endif %}
+
+              {% set mancano = ns.fine - ora -%}
+              Prossimo cambio **{{ ns.fine | timestamp_custom('%d/%m %H:%M') }}**, tra
+              {{- ' ' ~ (mancano / 3600) | round(0) | int ~ ' ore' if mancano < 172800 else ' ' ~ (mancano / 86400) | round(1) ~ ' giorni' }}
+              {%- if ns.prossimo is not none %}: {{ ns.prossimo }}{% else %}: fine del profilo{% endif %}.
+              {%- endif %}
+
+              | Step | Dal | Al | Temperatura |
+              |---|---|---|---|{{ ns.righe }}
+              {%- set eventi = state_attr('sensor.f1_cotta_piano', 'eventi') or [] %}
+              {%- if eventi | count > 0 %}
+              {%- set ev = namespace(righe='', prossimo=false) %}
+              {%- for e in eventi %}
+                {%- set q = namespace(t=t0, base=none) %}
+                {%- for p in passi %}
+                  {%- if q.base is none and p.step == e.step %}{% set q.base = q.t %}{% endif %}
+                  {%- set q.t = q.t + (p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                                       else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0)) * 3600 %}
+                {%- endfor %}
+                {%- set quando = (q.base if q.base is not none else t0) + (e.giorni | default(0)) * 86400 %}
+                {%- set giorno = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][(quando | timestamp_custom('%u') | int) - 1] %}
+                {%- if quando < ora %}
+                  {%- set nome = '✓ ' ~ e.evento %}
+                {%- elif not ev.prossimo %}
+                  {%- set nome = '▶ **' ~ e.evento ~ '**' %}
+                  {%- set ev.prossimo = true %}
+                {%- else %}
+                  {%- set nome = e.evento %}
+                {%- endif %}
+                {%- set ev.righe = ev.righe ~ '\n| ' ~ nome ~ ' | ' ~ giorno ~ ' ' ~ quando | timestamp_custom('%d/%m %H:%M')
+                                   ~ ' | ' ~ e.nota | default('') ~ ' |' %}
+              {%- endfor %}
+
+              **Date chiave** (le linee grigie nel piano completo)
+
+              | Evento | Quando | Cosa fare |
+              |---|---|---|{{ ev.righe }}
+              {%- endif %}
+              {%- endif %}
+
+          # ── PIANO COMPLETO, con le misure sopra ─────────────────────────
+          - type: custom:config-template-card
+            entities:
+              - input_datetime.f1_cotta_inizio
+              - input_text.f1_cotta_profilo
+              - sensor.f1_cotta_ore
+              - sensor.f1_cotta_piano
+            variables:
+              # Come negli altri grafici: medie a 5 minuti nei primi 9 giorni (le statistiche brevi durano 10
+              # giorni), poi orarie. Con le sole orarie all'inizio della cotta la sonda era un trattino di pochi
+              # pixel su 18 giorni, nascosto sotto la linea del piano.
+              PERIODO: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                return (Date.now() - t0) < 9 * 86400000 ? '5minute' : 'hour'; })()
+              DURATA: >-
+                (function () { var p = states['sensor.f1_cotta_piano'];
+                var g = p ? parseFloat(p.state) : 0;
+                return Math.ceil((g > 0 ? g : 1) * 1440) + 'min'; })()
+              SPOSTA: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : Date.now();
+                var p = states['sensor.f1_cotta_piano'];
+                var g = p ? parseFloat(p.state) : 0;
+                var m = Math.round((t0 + Math.ceil((g > 0 ? g : 1) * 1440) * 60000 - Date.now()) / 60000);
+                return (m >= 0 ? '+' : '-') + Math.abs(m) + 'min'; })()
+              # Fine del piano, come in DURATA/SPOSTA: dove si ferma la griglia dell'asse x.
+              FINE: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : Date.now();
+                var p = states['sensor.f1_cotta_piano'];
+                var g = p ? parseFloat(p.state) : 0;
+                return t0 + Math.ceil((g > 0 ? g : 1) * 1440) * 60000; })()
+              # Griglia del piano completo, più rada di quella degli altri grafici: una linea a ogni mezzanotte
+              # dall'inizio a `fine`, più spessa il lunedì, con la data (gg/mm) nella riga delle date al posto
+              # di quelle di ApexCharts. Id: settimana (lunedì), giorno-2 (mercoledì e venerdì), giorno-1 (gli
+              # altri); quali linee e quali date mostrare lo decide giorni_adatta, sotto.
+              GIORNI: >-
+                (function (fine) {
+                var a = states['input_datetime.f1_cotta_inizio'];
+                var da = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                var linee = [];
+                if (!(da > 0) || !(fine > da)) return linee;
+                for (var g = new Date(da); g.setHours(0, 0, 0, 0) <= fine; g.setDate(g.getDate() + 1)) {
+                  var x = g.getTime(), d = g.getDay();
+                  if (x < da) continue;
+                  var lunedi = d === 1;
+                  linee.push({ id: lunedi ? 'settimana' : d === 3 || d === 5 ? 'giorno-2' : 'giorno-1',
+                    x: x, strokeDashArray: 0, borderWidth: lunedi ? 2 : 1,
+                    borderColor: lunedi ? 'rgba(137,135,129,0.7)' : 'rgba(137,135,129,0.3)',
+                    label: { text: ('0' + g.getDate()).slice(-2) + '/' + ('0' + (g.getMonth() + 1)).slice(-2),
+                      orientation: 'horizontal', position: 'bottom', offsetY: 24, borderWidth: 0,
+                      style: { color: '#898781', background: 'transparent', fontSize: '12px' } } });
+                }
+                return linee; })
+              TITOLO: >-
+                'Piano completo, ' + states['input_text.f1_cotta_profilo'].state
+                + ' (' + Math.round(parseFloat(states['sensor.f1_cotta_piano'].state) || 0) + ' giorni)'
+              # Date chiave (attributo eventi del piano): ognuna cade `giorni` dopo l'inizio dello step che
+              # nomina. apexcharts-card aggiunge queste annotazioni alla linea di adesso (`now`).
+              EVENTI: >-
+                (function () { var a = states['input_datetime.f1_cotta_inizio'];
+                var t0 = a && a.attributes.timestamp ? a.attributes.timestamp * 1000 : 0;
+                var p = states['sensor.f1_cotta_piano'];
+                var passi = (p && p.attributes.profilo) || [];
+                var eventi = (p && p.attributes.eventi) || [];
+                if (!t0) return [];
+                var inizio = {}; var t = t0;
+                passi.forEach(function (s) {
+                  if (!(s.step in inizio)) inizio[s.step] = t;
+                  t += (s.ramp_days != null ? s.ramp_days * 24 : s.ramp_hours != null ? s.ramp_hours
+                    : s.duration_days != null ? s.duration_days * 24 : (s.duration_hours || 0)) * 3600000; });
+                return eventi.map(function (e) {
+                  return { x: (e.step in inizio ? inizio[e.step] : t0) + (e.giorni || 0) * 86400000,
+                    borderColor: '#898781', strokeDashArray: 4,
+                    label: { text: e.evento, orientation: 'vertical', borderWidth: 0,
+                      style: { color: '#898781', background: 'transparent' } } }; }); })()
+            card:
+              type: custom:apexcharts-card
+              graph_span: "${DURATA}"
+              span:
+                offset: "${SPOSTA}"
+              update_interval: 30min
+              header:
+                show: true
+                title: "${TITOLO}"
+                show_states: false
+              # Solo la linea di adesso, senza etichetta: la scritta "Ora" copriva le curve.
+              now:
+                show: true
+              apex_config:
+                chart:
+                  height: 340
+                  # Linee: una al giorno se distano almeno 12 px, se no una ogni 2 giorni (lunedì, mercoledì,
+                  # venerdì), se no solo i lunedì. Date: come negli altri grafici, misurate con un canvas;
+                  # tutti i giorni se non si toccano (almeno 6 px tra l'una e l'altra), se no solo i lunedì,
+                  # se no nessuna. Quelle che uscirebbero dal grafico non si mostrano; le date di ApexCharts
+                  # si nascondono sempre (restano solo per tenere lo spazio della riga). Lo spessore dei
+                  # lunedì lo rimette anche qui, nel caso borderWidth delle annotazioni fosse ignorato.
+                  events:
+                    mounted: &giorni_adatta >-
+                      EVAL:function (chart) {
+                      var el = chart.el, w = chart.w.globals, larghezza = w.gridWidth;
+                      if (!el || !(larghezza > 0) || !(w.maxX > w.minX)) return;
+                      var giorno = larghezza * 86400000 / (w.maxX - w.minX);
+                      var tutti = function (sel) { return [].slice.call(el.querySelectorAll(sel)); };
+                      tutti('line.giorno-1').forEach(function (n) { n.style.display = giorno >= 12 ? '' : 'none'; });
+                      tutti('line.giorno-2').forEach(function (n) { n.style.display = giorno >= 6 ? '' : 'none'; });
+                      tutti('line.settimana').forEach(function (n) { n.setAttribute('stroke-width', 2); });
+                      tutti('text.apexcharts-xaxis-label').forEach(function (n) { n.style.visibility = 'hidden'; });
+                      var tela = document.createElement('canvas').getContext('2d');
+                      var box = function (n) {
+                        var t = (n.querySelector('tspan') || n).textContent.trim();
+                        tela.font = (n.getAttribute('font-size') || '12px') + ' ' + (n.getAttribute('font-family') || 'sans-serif');
+                        var m = tela.measureText(t).width / 2, c = parseFloat(n.getAttribute('x'));
+                        return [c - m, c + m]; };
+                      var dentro = function (b) { return b[0] >= 0 && b[1] <= larghezza; };
+                      var gruppi = { tutti: ['settimana', 'giorno-2', 'giorno-1'], lunedi: ['settimana'] };
+                      var scelta = ['tutti', 'lunedi'].find(function (k) {
+                        var bb = gruppi[k].reduce(function (s, id) { return s.concat(tutti('text.' + id)); }, [])
+                          .map(box).filter(dentro).sort(function (a, b) { return a[0] - b[0]; });
+                        for (var i = 1; i < bb.length; i++) if (bb[i][0] < bb[i - 1][1] + 6) return false;
+                        return bb.length > 0; });
+                      ['settimana', 'giorno-2', 'giorno-1'].forEach(function (id) {
+                        tutti('text.' + id).forEach(function (n) {
+                          n.style.display = scelta && gruppi[scelta].indexOf(id) >= 0 && dentro(box(n)) ? '' : 'none'; }); }); }
+                    updated: *giorni_adatta
+                legend:
+                  show: true
+                annotations:
+                  xaxis: "${GIORNI(FINE).concat(EVENTI)}"
+              # Il grafico di tutta la cotta: sonda F1, piano e (se usato) Inkbird. Con un iSpindel nella birra
+              # di F1 si aggiungono qui densità (asse a destra) e temperatura, come nella dashboard F2 Cotta.
+              yaxis:
+                - id: temp
+                  decimals: 0
+                  apex_config:
+                    forceNiceScale: true
+              series:
+                - entity: sensor.f1_cotta_temperatura_piano
+                  name: Piano
+                  yaxis_id: temp
+                  color: "#2a78d6"
+                  stroke_width: 2
+                  curve: straight
+                  data_generator: *piano_cotta
+                  show:
+                    legend_value: false
+                # Dopo il piano: ApexCharts disegna sopra le serie che vengono dopo.
+                - entity: sensor.f1_v6_temperatura
+                  name: T sonda F1
+                  yaxis_id: temp
+                  color: "#e34948"
+                  stroke_width: 2
+                  statistics:
+                    type: mean
+                    period: "${PERIODO}"
+                  extend_to: now
+                  show:
+                    legend_value: false
+                - entity: sensor.f1_cotta_setpoint_inkbird_storico
+                  name: Inkbird
+                  yaxis_id: temp
+                  color: "#c98500"
+                  stroke_width: 2
+                  stroke_dash: 6
+                  curve: stepline
+                  statistics:
+                    type: mean
+                    period: hour
+                  extend_to: now
+                  show:
+                    legend_value: false
+
+          - type: entities
+            title: Dati della cotta
+            entities:
+              - entity: input_datetime.f1_cotta_inizio
+                name: Inizio della fermentazione
+              - entity: input_text.f1_cotta_profilo
+                name: Profilo del piano (nome del file, senza .json)
+              - entity: input_number.f1_cotta_inkbird
+                name: Setpoint Inkbird (0 = non in uso)
+              - entity: sensor.f1_cotta_piano
+                name: Durata del piano
+              - entity: input_boolean.f1_ispindel_presente
+                name: iSpindel nella birra di F1 (sorveglia la regolazione stimata)
 
   # ══════════════════════════════════════════════════════════════════════════
   # LABORATORIO — il controllore dal vivo
@@ -933,7 +1457,7 @@ views:
           ALLARME:
             type: custom:mushroom-template-card
             primary: "ALLARME — risolvi prima di avviare"
-            secondary: Controlla il sensore DS18B20
+            secondary: Controlla la sonda F1 e il nodo sensori V7
             icon: mdi:alarm-light
             icon_color: red
             tap_action:
@@ -1147,6 +1671,42 @@ views:
                 target:
                   entity_id: input_boolean.f1_v6_conferma_stop
 
+      # ── ANDAMENTO DELLA FERMENTAZIONE ────────────────────────────────────
+      # Medie a 15 minuti: su 7 giorni le letture al minuto sarebbero ~10 000 punti per serie.
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Temperatura — 7 giorni
+          show_states: true
+          colorize_states: true
+        graph_span: 7d
+        update_interval: 5min
+        now:
+          show: true
+        apex_config:
+          chart:
+            height: 320
+          legend:
+            show: true
+        yaxis:
+          - id: temp
+            decimals: 1
+        series:
+          - entity: sensor.f1_v6_temperatura
+            name: Temperatura
+            yaxis_id: temp
+            color: "#e53935"
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 15min
+          - entity: sensor.f1_v6_setpoint
+            name: Setpoint
+            yaxis_id: temp
+            color: "#1e88e5"
+            curve: stepline
+            stroke_width: 2
+
       - type: entities
         title: Profilo
         entities:
@@ -1224,6 +1784,13 @@ views:
             name: Sensore non utilizzabile
           - entity: sensor.f1_v6_eta_lettura
             name: Età dell'ultima lettura
+          # Dal 2026-10-28 (firmware 7.0.0) la sonda è sul nodo sensori V7: dettagli nella dashboard /v7-sensori.
+          - entity: binary_sensor.v7_sensori_online
+            name: Nodo sensori V7 (sonda F1)
+          - entity: sensor.v7_sensori_rssi
+            name: Segnale WiFi del nodo sensori
+          - entity: sensor.v7_temperatura_chiller
+            name: Glicole del chiller
           - entity: binary_sensor.f1_v6_allarme
             name: Allarme firmware
           - entity: sensor.f1_v6_allarme_tipo
@@ -1236,7 +1803,8 @@ views:
         content: |
           Valgono in Produzione e in Didattica, qualunque algoritmo sia scelto:
 
-          - relè spenti se la lettura del sensore è più vecchia di 20 s o non valida;
+          - senza una lettura valida da 30 s (la sonda è sul nodo sensori V7) regolazione stimata col carico
+            appreso, al massimo 72 h; senza carico appreso, o dopo, relè spenti;
           - relè spenti fuori dai limiti assoluti **36 °C / −1 °C**, setpoint sempre tra 0 e 35 °C;
           - tempi minimi dei relè: acceso ≥ 30 s, spento ≥ 60 s, 60 s di attesa per invertire caldo/freddo;
           - watchdog: riavvio automatico se il programma si blocca per 60 s;

@@ -1,0 +1,55 @@
+{
+  "fg_obiettivo": 1.01,
+  "profilo": [
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 19,
+      "duration_days": 3
+    },
+    {
+      "step": "Rampa Libera",
+      "temp": 22,
+      "ramp_days": 1
+    },
+    {
+      "step": "Finitura",
+      "temp": 22,
+      "duration_days": 9.02796
+    },
+    {
+      "step": "Rampa Freddo",
+      "temp": 6,
+      "ramp_days": 3
+    },
+    {
+      "step": "Cold Crash",
+      "temp": 6,
+      "duration_days": 3
+    },
+    {
+      "step": "Attesa Imbottigliamento",
+      "temp": 6,
+      "duration_days": 16.75
+    }
+  ],
+  "eventi": [
+    {
+      "evento": "Controllo densità",
+      "step": "Finitura",
+      "giorni": 1,
+      "nota": "Densimetro: WB-06 attenua molto, ci si aspetta di essere già vicini alla FG"
+    },
+    {
+      "evento": "FG ferma?",
+      "step": "Finitura",
+      "giorni": 9.02796,
+      "nota": "Densimetro: due letture uguali a 48 h di distanza prima di scendere al freddo. Se cala ancora, allungare la Finitura (allungata al 05/11 il 30/10). Rampa lenta: 3 giorni da 22 a 6 °C"
+    },
+    {
+      "evento": "Imbottigliamento",
+      "step": "Attesa Imbottigliamento",
+      "giorni": 16.75,
+      "nota": "Sabato 28/11, insieme alla lager. Priming calcolato a 22 °C, non a 6: WB-06 è diastaticus, imbottigliare solo a densità ferma"
+    }
+  ]
+}

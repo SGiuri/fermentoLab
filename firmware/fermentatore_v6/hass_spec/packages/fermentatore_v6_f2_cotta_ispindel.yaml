@@ -1,0 +1,22 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F2 — L'iSPINDEL NELLA COTTA DI F2
+#
+# Solo F2, scritto a mano: genera_f2.py legge i file fermentatore_v6_f1_* e non tocca questo.
+# Dal 2026-10-17 in F2 c'è la lager di ottobre con l'iSpindel 01 (topic ispindel/ispindel01/*, entità
+# sensor.ispindel_01_* del pacchetto ispindel_01 del progetto DensityMeter). Se la sonda cambia
+# fermentatore o se ne usa un'altra, cambiare qui il topic.
+# =============================================================================
+
+template:
+  # Ora dell'ultimo messaggio della sonda, per la card di stato della dashboard F2 Cotta. Le misure MQTT
+  # dell'iSpindel scadono dopo 45 minuti (expire_after) e, se HA si riavvia mentre sono scadute, il loro
+  # last_changed diventa l'ora del riavvio. Questo sensore invece si ripristina: dice sempre da quanto tace.
+  - triggers:
+      - trigger: mqtt
+        topic: "ispindel/ispindel01/tilt"
+    sensor:
+      - name: "F2 iSpindel Ultima Lettura"
+        unique_id: f2_ispindel_ultima_lettura
+        device_class: timestamp
+        icon: mdi:clock-check-outline
+        state: "{{ now().isoformat() }}"

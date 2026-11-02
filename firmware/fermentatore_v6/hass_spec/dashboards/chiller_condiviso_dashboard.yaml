@@ -1,0 +1,239 @@
+# =============================================================================
+# Dashboard "Chiller condiviso" — due birre sullo stesso circuito del glicole
+# Dal 2026-10-23 il chiller raffredda due recipienti: F1 (la witbier, regolata dall'ESP32: la pompa è
+# il relè refrigeratore di F1) e F2 (la lager, regolata da un Inkbird che HA non vede). Quando una delle
+# due chiede molto freddo il glicole si scalda e l'altra ne risente: il 23/10, travasata la witbier a
+# ~30 °C in F1, la lager in F2 è salita da 1,3 a 4,5 °C in un'ora. Pagina didattica: le temperature delle
+# due birre e del glicole sullo stesso grafico, con i periodi di pompa accesa di F1.
+#
+# Misure, dal 2026-10-28 dal nodo sensori V7 (ESP32-S3, firmware/fermentatore_v7):
+# - glicole: sensor.v7_temperatura_chiller (sensore 6);
+# - F1: sensor.f1_v6_temperatura, la temperatura che l'ESP32 di F1 usa per regolare. Con la 7.0.0 l'ESP32
+#   la riceve dal nodo sensori (sensore 7, anche sensor.v7_temperatura_f1), prima la leggeva dalla sua sonda;
+# - F2: sensor.v7_temperatura_f2 (sensore 5) e l'iSpindel 01 nella lager (sensor.ispindel_01_temperatura,
+#   una lettura ogni 15 minuti quando la radio passa; legge circa 3 °C più della sonda).
+# La pompa dell'Inkbird non è misurata. Il grafico di 48 ore usa lo storico grezzo (10 giorni), quello di
+# 7 giorni le statistiche a 5 minuti per le temperature.
+#
+# Un solo asse in °C: fino al 28/10 le due birre (circa 20 e 2 °C) stavano su due assi, ma il glicole
+# (−6 °C e più) riempie lo spazio tra le due e con tre misure nella stessa unità due scale ingannano.
+# Colori (validati come gruppo con la palette): glicole blu, F1 rosso, F2 acqua (sonda e setpoint
+# Inkbird), iSpindel giallo, pompa F1 fondo azzurro.
+# Richiede apexcharts-card.
+# =============================================================================
+title: Chiller condiviso
+views:
+  - title: Chiller
+    path: chiller
+    icon: mdi:snowflake-thermometer
+    type: panel
+    cards:
+      - type: vertical-stack
+        cards:
+
+          # ── STATO: glicole, le due birre e la pompa di F1, adesso ───────
+          - type: markdown
+            content: |
+              {%- set gl = states('sensor.v7_temperatura_chiller') | float(none) %}
+              {%- set t1 = states('sensor.f1_v6_temperatura') | float(none) %}
+              {%- set sp1 = states('sensor.f1_v6_setpoint') | float(none) %}
+              {%- set t2 = states('sensor.v7_temperatura_f2') | float(none) %}
+              {%- set ti = states('sensor.ispindel_01_temperatura') | float(none) %}
+              {%- set ultima = as_datetime(states('sensor.f2_ispindel_ultima_lettura'))
+                               if has_value('sensor.f2_ispindel_ultima_lettura') else none %}
+              {%- set ink = states('input_number.f2_cotta_inkbird') | float(0) %}
+              **Glicole** {{ '%.1f' | format(gl) if gl is not none else '—' }} °C
+              · pompa F1 **{{ 'accesa' if is_state('binary_sensor.f1_v6_refrigeratore', 'on') else 'spenta' }}**
+              · accesa {{ states('sensor.f1_v6_frigo_time_24h') | float(0) | round(1) }} h nelle ultime 24 h
+
+              **F1 witbier** {{ '%.1f' | format(t1) if t1 is not none else '—' }} °C
+              {%- if sp1 is not none and states('sensor.f1_v6_fsm') in ['RUNNING', 'HOLDING'] %} (setpoint {{ '%.1f' | format(sp1) }} °C){% endif %}
+
+              **F2 lager** {{ '%.1f' | format(t2) if t2 is not none else '—' }} °C
+              {%- if ink > 0 %} (Inkbird {{ '%.1f' | format(ink) }} °C){% endif %}
+              · iSpindel {{ '%.1f' | format(ti) if ti is not none else '—' }} °C
+              {%- if ultima is not none %}, lettura delle {{ as_timestamp(ultima) | timestamp_custom('%H:%M') }},
+              {{ ((now() - ultima).total_seconds() / 60) | round(0) | int }} min fa{% endif %}
+              {%- if not is_state('binary_sensor.v7_sensori_online', 'on') %}
+
+              ⚠️ **Nodo sensori V7 offline** da {{ relative_time(states.binary_sensor.v7_sensori_online.last_changed) }}:
+              niente glicole né sonda F2, e l'ESP32 di F1 regola alla cieca (regolazione stimata).
+              {%- endif %}
+
+              Il glicole è uno solo: quando la pompa di F1 lavora a lungo su una birra calda, il glicole si
+              scalda e la lager in F2 sale, anche se il suo Inkbird non è cambiato. Le fasce azzurre nei grafici
+              sono i periodi di pompa F1 accesa (l'Inkbird di F2 non è misurato).
+
+          # ── ULTIME 48 ORE ───────────────────────────────────────────────
+          - type: custom:apexcharts-card
+            graph_span: 48h
+            update_interval: 5min
+            header:
+              show: true
+              title: Glicole e birre, ultime 48 ore
+              show_states: true
+              colorize_states: true
+            apex_config:
+              chart:
+                height: 360
+              legend:
+                show: true
+            yaxis: &assi
+              - id: temp
+                decimals: 0
+                apex_config:
+                  forceNiceScale: true
+                  title:
+                    text: °C
+              # Asse nascosto della pompa: 1 = accesa.
+              - id: pompa
+                show: false
+                min: 0
+                max: 1
+            series:
+              # Prima la pompa, così le temperature restano disegnate sopra.
+              - &pompa
+                entity: binary_sensor.f1_v6_refrigeratore
+                name: Pompa F1 accesa
+                yaxis_id: pompa
+                type: area
+                curve: stepline
+                color: "#7fb8e6"
+                opacity: 0.25
+                stroke_width: 0
+                transform: "return x === 'on' ? 1 : 0;"
+                show:
+                  in_header: false
+                  legend_value: false
+              - entity: sensor.v7_temperatura_chiller
+                name: Glicole
+                yaxis_id: temp
+                color: "#2a78d6"
+                stroke_width: 2
+                float_precision: 1
+                show:
+                  legend_value: false
+              - entity: sensor.f1_v6_temperatura
+                name: F1 witbier (sonda)
+                yaxis_id: temp
+                color: "#e34948"
+                stroke_width: 2
+                float_precision: 1
+                show:
+                  legend_value: false
+              - entity: sensor.f1_v6_setpoint
+                name: Setpoint F1
+                yaxis_id: temp
+                color: "#e34948"
+                stroke_width: 1
+                stroke_dash: 4
+                curve: stepline
+                float_precision: 1
+                show:
+                  in_header: false
+                  legend_value: false
+              - entity: sensor.v7_temperatura_f2
+                name: F2 lager (sonda)
+                yaxis_id: temp
+                color: "#199e70"
+                stroke_width: 2
+                float_precision: 1
+                show:
+                  legend_value: false
+              # Il setpoint dell'Inkbird: HA non lo legge, è quello scritto a mano in F2 Cotta, copiato nelle
+              # statistiche orarie dal pacchetto fermentatore_v6_f2_cotta.
+              - &setpoint_f2
+                entity: sensor.f2_cotta_setpoint_inkbird_storico
+                name: Setpoint F2 (Inkbird)
+                yaxis_id: temp
+                color: "#199e70"
+                stroke_width: 1
+                stroke_dash: 4
+                curve: stepline
+                float_precision: 1
+                statistics:
+                  type: mean
+                  period: hour
+                extend_to: now
+                show:
+                  in_header: false
+                  legend_value: false
+              - entity: sensor.ispindel_01_temperatura
+                name: F2 lager (iSpindel)
+                yaxis_id: temp
+                color: "#c98500"
+                stroke_width: 1
+                float_precision: 1
+                # Una lettura ogni 15 minuti, con buchi quando la radio non passa: punti uniti da una linea.
+                show:
+                  legend_value: false
+
+          # ── ULTIMI 7 GIORNI ─────────────────────────────────────────────
+          - type: custom:apexcharts-card
+            graph_span: 7d
+            update_interval: 30min
+            header:
+              show: true
+              title: Glicole e birre, ultimi 7 giorni
+              show_states: false
+            apex_config:
+              chart:
+                height: 300
+              legend:
+                show: true
+            yaxis: *assi
+            series:
+              - *pompa
+              - entity: sensor.v7_temperatura_chiller
+                name: Glicole
+                yaxis_id: temp
+                color: "#2a78d6"
+                stroke_width: 2
+                statistics:
+                  type: mean
+                  period: 5minute
+                show:
+                  legend_value: false
+              - entity: sensor.f1_v6_temperatura
+                name: F1 witbier (sonda)
+                yaxis_id: temp
+                color: "#e34948"
+                stroke_width: 2
+                statistics:
+                  type: mean
+                  period: 5minute
+                show:
+                  legend_value: false
+              - entity: sensor.f1_v6_setpoint
+                name: Setpoint F1
+                yaxis_id: temp
+                color: "#e34948"
+                stroke_width: 1
+                stroke_dash: 4
+                curve: stepline
+                statistics:
+                  type: mean
+                  period: 5minute
+                show:
+                  legend_value: false
+              - entity: sensor.v7_temperatura_f2
+                name: F2 lager (sonda)
+                yaxis_id: temp
+                color: "#199e70"
+                stroke_width: 2
+                statistics:
+                  type: mean
+                  period: 5minute
+                show:
+                  legend_value: false
+              - *setpoint_f2
+              - entity: sensor.ispindel_01_temperatura
+                name: F2 lager (iSpindel)
+                yaxis_id: temp
+                color: "#c98500"
+                stroke_width: 1
+                statistics:
+                  type: mean
+                  period: 5minute
+                show:
+                  legend_value: false

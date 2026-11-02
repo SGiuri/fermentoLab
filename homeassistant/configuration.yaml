@@ -34,6 +34,34 @@ lovelace:
       icon: mdi:school
       show_in_sidebar: true
       require_admin: false
+    chiller-condiviso:
+      mode: yaml
+      filename: chiller_condiviso_dashboard.yaml
+      title: Chiller condiviso
+      icon: mdi:snowflake-thermometer
+      show_in_sidebar: true
+      require_admin: false
+    f1-cotta:
+      mode: yaml
+      filename: f1_v6_cotta_dashboard.yaml
+      title: F1 Cotta
+      icon: mdi:glass-mug-variant
+      show_in_sidebar: true
+      require_admin: false
+    f2-cotta:
+      mode: yaml
+      filename: f2_v6_cotta_dashboard.yaml
+      title: F2 Cotta
+      icon: mdi:glass-mug-variant
+      show_in_sidebar: true
+      require_admin: false
+    storico-birre:
+      mode: yaml
+      filename: storico_birre_dashboard.yaml
+      title: Storico birre
+      icon: mdi:book-open-variant
+      show_in_sidebar: true
+      require_admin: false
 
 notify:
   - name: fermentazione_email
@@ -107,6 +135,7 @@ input_select:
     name: F1 V6 Profilo da Avviare
     options:
       - ale_generica
+      - cerveza_especial
       - czech_pils_W34
       - ipa_dryhop
       - lager_generica
@@ -114,6 +143,7 @@ input_select:
       - test_costante
       - test_rampa_v
       - test_wave_10_20m
+      - witbier_WB06
     icon: mdi:flask
 
   f1_v6_graph_span:
@@ -155,6 +185,7 @@ input_select:
     name: F2 V6 Profilo da Avviare
     options:
       - ale_generica
+      - cerveza_especial
       - czech_pils_W34
       - ipa_dryhop
       - lager_generica
@@ -162,6 +193,7 @@ input_select:
       - test_costante
       - test_rampa_v
       - test_wave_10_20m
+      - witbier_WB06
     icon: mdi:flask
 
   f2_v6_graph_span:

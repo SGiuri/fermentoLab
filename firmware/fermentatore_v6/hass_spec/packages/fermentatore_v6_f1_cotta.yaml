@@ -1,0 +1,363 @@
+# =============================================================================
+# Pacchetto Home Assistant — Fermentatore V6 F1 — LA COTTA IN CORSO
+#
+# Dati per la vista "Cotta" della dashboard del fermentatore: il grafico parte dall'inizio della
+# fermentazione e arriva a oggi, con accanto il piano completo del profilo.
+#
+# Il piano non dipende dall'ESP32: si calcola dal file del profilo in /config/profili_fermentazione
+# (lo stesso che script_py/avvia_fermentazione_v6.py manda al firmware) e dall'ora di inizio scritta
+# qui. Così resta valido anche se l'ESP32 è fermo, in pausa o regola un altro recipiente, e se la
+# temperatura la tiene un regolatore esterno (Inkbird).
+#
+# Nuova cotta: avviando un profilo da file nella vista Fermentazione, inizio e profilo si copiano qui da
+# soli (automazione in fondo). Con un regolatore esterno si impostano a mano nella vista Cotta.
+# Le misure nei grafici vengono dalle statistiche a lungo termine (lo storico grezzo dura 10 giorni).
+#
+# Letture manuali della densità (rifrattometro, densimetro): lo script f1_cotta_registra_lettura le manda
+# al registro (F1 Cotta Letture), F1 Cotta Densità le corregge. Niente helper nuovi: input_number.reload e
+# input_select.reload riporterebbero al valore `initial` gli helper che ce l'hanno, anche a cotta in corso.
+#
+# Generato da genera_f2.py: modificare questo file e rigenerare la versione F2.
+# =============================================================================
+
+input_datetime:
+  f1_cotta_inizio:
+    name: "F1 Cotta Inizio"
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-start
+
+input_text:
+  # Nome del file del profilo senza .json (es. czech_pils_W34). Vuoto = nessuna cotta.
+  f1_cotta_profilo:
+    name: "F1 Cotta Profilo"
+    max: 64
+    pattern: "[A-Za-z0-9_\\-]*"
+    icon: mdi:flask
+
+input_number:
+  # Temperatura impostata sul regolatore esterno quando regola lui; 0 = non in uso.
+  f1_cotta_inkbird:
+    name: "F1 Cotta Setpoint Inkbird"
+    min: 0
+    max: 30
+    step: 0.1
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermostat
+
+# Legge il file del profilo. Non file.read_file: /config/profili_fermentazione non è nella allowlist.
+# Con un template nel comando HA non usa la shell (niente redirezioni o pipe). find e non cat: se il file
+# non c'è (profilo vuoto o sbagliato) esce con 0 e niente testo, quindi il piano resta vuoto senza
+# riempire il log di errori.
+shell_command:
+  f1_cotta_leggi_profilo: "find /config/profili_fermentazione -maxdepth 1 -name {{ profilo }}.json -exec cat {} ;"
+
+script:
+  # Si compila dal suo dialogo (vista Cotta, "Registra una lettura"). Il valore va scritto come letto: le
+  # correzioni le fa F1 Cotta Densità, e si rifanno da sole se cambia l'OG.
+  f1_cotta_registra_lettura:
+    alias: "F1 Cotta - Registra una lettura della densità"
+    icon: mdi:water-plus
+    mode: queued
+    fields:
+      sg:
+        name: SG letta
+        description: Il valore sulla scala SG dello strumento, così come letto (es. 1.012).
+        required: true
+        selector:
+          number:
+            min: 0.980
+            max: 1.150
+            step: 0.001
+            mode: box
+      strumento:
+        name: Strumento
+        required: true
+        default: rifrattometro
+        selector:
+          select:
+            options:
+              - label: "Rifrattometro: lettura grezza, corretta per l'alcol con l'OG"
+                value: rifrattometro
+              - label: "Densimetro: corretto per la temperatura del campione"
+                value: densimetro
+              - label: "Valore già corretto: preso così com'è"
+                value: corretta
+      og:
+        name: È l'OG
+        description: Mosto prima dell'inoculo. Serve a correggere le letture del rifrattometro.
+        default: false
+        selector:
+          boolean:
+      quando:
+        name: Momento del prelievo
+        description: Vuoto = adesso.
+        selector:
+          datetime:
+      temperatura:
+        name: Temperatura del campione (°C)
+        description: Solo col densimetro (tarato a 20 °C). Vuoto = non correggere.
+        selector:
+          number:
+            min: 0
+            max: 40
+            step: 0.1
+            mode: box
+      nota:
+        name: Nota
+        selector:
+          text:
+    sequence:
+      - event: f1_cotta_lettura
+        event_data:
+          azione: aggiungi
+          sg: "{{ sg }}"
+          strumento: "{{ strumento | default('rifrattometro') }}"
+          og: "{{ og | default(false) | bool }}"
+          # Il selettore datetime dà l'ora locale senza fuso: replace la lega al fuso di HA (ora legale compresa).
+          ts: >-
+            {{ (as_datetime(quando).replace(tzinfo=now().tzinfo).timestamp() if quando is defined and quando
+                else now().timestamp()) | int }}
+          temperatura: "{{ temperatura | default(0) | float(0) }}"
+          nota: "{{ nota | default('') }}"
+
+  f1_cotta_elimina_ultima_lettura:
+    alias: "F1 Cotta - Elimina l'ultima lettura registrata"
+    icon: mdi:undo
+    mode: single
+    sequence:
+      - event: f1_cotta_lettura
+        event_data:
+          azione: elimina_ultima
+
+template:
+  # Stato: durata del profilo in giorni. Attributi `profilo` ed `eventi`: gli step e le date chiave del file JSON.
+  # Si rilegge quando cambia il profilo e una volta l'ora (modifiche al file).
+  - triggers:
+      - trigger: state
+        entity_id: input_text.f1_cotta_profilo
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "7"
+    actions:
+      - action: shell_command.f1_cotta_leggi_profilo
+        data:
+          profilo: "{{ states('input_text.f1_cotta_profilo') | regex_replace('[^A-Za-z0-9_-]', '') }}"
+        response_variable: letto
+        continue_on_error: true
+    sensor:
+      - name: "F1 Cotta Piano"
+        unique_id: f1_cotta_piano
+        icon: mdi:chart-timeline-variant
+        unit_of_measurement: "d"
+        state: >-
+          {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+          {% set ns = namespace(g=0) %}
+          {% for s in dati.get('profilo', []) %}
+            {% set ns.g = ns.g + (s.ramp_days if s.ramp_days is defined
+                                  else s.duration_days if s.duration_days is defined
+                                  else (s.ramp_hours | default(s.duration_hours | default(0))) / 24) %}
+          {% endfor %}
+          {{ ns.g | round(2) }}
+        attributes:
+          profilo: >-
+            {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+            {{ dati.get('profilo', []) }}
+          # Date chiave della cotta (scarichi, controlli), dalla chiave "eventi" del file: ognuno cade
+          # `giorni` dopo l'inizio dello step che nomina. Il firmware non le riceve.
+          eventi: >-
+            {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+            {{ dati.get('eventi', []) }}
+          # Densità finale attesa (chiave facoltativa "fg_obiettivo" del file), per il grafico della densità.
+          fg_obiettivo: >-
+            {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+            {{ dati.get('fg_obiettivo') }}
+
+  - sensor:
+      # Temperatura del piano adesso, come calcolaSetpoint() nel firmware: le rampe partono dalla
+      # temperatura dello step precedente, finito il profilo resta l'ultima. Attributo step: lo step in corso.
+      - name: "F1 Cotta Temperatura Piano"
+        unique_id: f1_cotta_temperatura_piano
+        icon: mdi:target
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state: >-
+          {% set passi = state_attr('sensor.f1_cotta_piano', 'profilo') or [] %}
+          {% set ora = now().timestamp() %}
+          {% set ns = namespace(t=state_attr('input_datetime.f1_cotta_inizio', 'timestamp') | float(0),
+                                prec=passi[0].temp if passi else 0, v=none) %}
+          {% for p in passi %}
+            {% set rampa = p.ramp_days is defined or p.ramp_hours is defined %}
+            {% set ore = p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                         else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0) %}
+            {% set fine = ns.t + ore * 3600 %}
+            {% if ns.v is none and ora < fine %}
+              {% set ns.v = ns.prec + (p.temp - ns.prec) * (ora - ns.t) / (fine - ns.t) if rampa else p.temp %}
+            {% endif %}
+            {% set ns.prec = p.temp %}
+            {% set ns.t = fine %}
+          {% endfor %}
+          {{ (ns.v if ns.v is not none else ns.prec) | round(2) }}
+        availability: >-
+          {% set t0 = state_attr('input_datetime.f1_cotta_inizio', 'timestamp') %}
+          {{ t0 is number and now().timestamp() >= t0
+             and (state_attr('sensor.f1_cotta_piano', 'profilo') or []) | count > 0 }}
+        attributes:
+          step: >-
+            {% set passi = state_attr('sensor.f1_cotta_piano', 'profilo') or [] %}
+            {% set ora = now().timestamp() %}
+            {% set ns = namespace(t=state_attr('input_datetime.f1_cotta_inizio', 'timestamp') | float(0), step='fine del piano') %}
+            {% for p in passi %}
+              {% set ore = p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                           else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0) %}
+              {% if ns.t <= ora < ns.t + ore * 3600 %}{% set ns.step = p.step %}{% endif %}
+              {% set ns.t = ns.t + ore * 3600 %}
+            {% endfor %}
+            {{ ns.step }}
+
+      # Ore intere dall'inizio: cambia una volta l'ora e fa ridisegnare i grafici della vista Cotta.
+      - name: "F1 Cotta Ore"
+        unique_id: f1_cotta_ore
+        icon: mdi:timer-sand
+        unit_of_measurement: "h"
+        state: >-
+          {% set t0 = state_attr('input_datetime.f1_cotta_inizio', 'timestamp') %}
+          {{ ((now().timestamp() - t0) / 3600) | int if t0 is number and now().timestamp() > t0 else 0 }}
+
+      # Copia del setpoint dell'Inkbird con statistiche a lungo termine, per il grafico.
+      - name: "F1 Cotta Setpoint Inkbird Storico"
+        unique_id: f1_cotta_inkbird_storico
+        icon: mdi:thermostat
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        state: "{{ states('input_number.f1_cotta_inkbird') | float(0) }}"
+        availability: "{{ states('input_number.f1_cotta_inkbird') | float(0) > 0 }}"
+
+  # Registro delle letture manuali, come lette, nell'ordine in cui sono state registrate: "Elimina l'ultima"
+  # toglie l'ultima di questa lista. Sensore a trigger, quindi stato e attributi restano dopo
+  # template.reload e dopo un riavvio. Stato: ora dell'ultima modifica. Tiene le ultime 200 letture.
+  - triggers:
+      - trigger: event
+        event_type: f1_cotta_lettura
+    sensor:
+      - name: "F1 Cotta Letture"
+        unique_id: f1_cotta_letture
+        icon: mdi:clipboard-list-outline
+        device_class: timestamp
+        state: "{{ now().isoformat() }}"
+        attributes:
+          letture: >-
+            {%- set prima = this.attributes.letture | default([]) if this is defined and this.attributes is defined else [] %}
+            {%- set e = trigger.event.data %}
+            {%- if e.azione == 'aggiungi' and e.sg | float(0) > 0.9 %}
+              {{- (prima + [{'ts': (e.ts | int(0) or now().timestamp() | int) * 1000, 'letta': e.sg | float | round(4),
+                             'strumento': e.strumento | default('corretta'), 'og': e.og | default(false) | bool,
+                             'temp': e.temperatura | float(0) | round(1), 'nota': e.nota | default('') | string }])[-200:] }}
+            {%- elif e.azione == 'elimina_ultima' %}
+              {{- prima[:-1] }}
+            {%- else %}
+              {{- prima }}
+            {%- endif %}
+
+  # Le letture della cotta in corso, da 24 ore prima dell'inizio (l'OG si misura prima di avviare il
+  # profilo), in ordine di prelievo e con la SG corretta:
+  # - rifrattometro: l'OG come mosto (Brix diviso per il fattore del mosto, 1,04); le altre anche per l'alcol,
+  #   con la formula cubica di Sean Terrill e l'ultima OG registrata. Senza OG restano senza SG corretta.
+  # - densimetro: riportato alla temperatura di taratura di 20 °C, se la temperatura del campione c'è.
+  # - valore già corretto: invariato.
+  # Stato: la SG corretta più recente. Nessuna availability: anche senza SG corretta l'attributo letture
+  # serve alla tabella della vista Cotta.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.f1_cotta_letture
+      - trigger: state
+        entity_id: input_datetime.f1_cotta_inizio
+    variables:
+      calcolo: >-
+        {%- macro brix(sg) %}{{ ((182.4601 * sg - 775.6821) * sg + 1262.7794) * sg - 669.5622 }}{% endmacro %}
+        {%- macro da_brix(b) %}{{ b / (258.6 - (b / 258.2) * 227.1) + 1 }}{% endmacro %}
+        {%- macro k(c) %}{% set f = c * 9 / 5 + 32 %}{{ 1.00130346 - 0.000134722124 * f + 0.00000204052596 * f ** 2 - 0.00000000232820948 * f ** 3 }}{% endmacro %}
+        {%- macro mosto(r) %}{{ da_brix(brix(r.letta) | float / 1.04) if r.strumento == 'rifrattometro'
+                                else r.letta * (k(r.temp) | float) / (k(20) | float) if r.strumento == 'densimetro' and r.temp > 0
+                                else r.letta }}{% endmacro %}
+        {%- set da = ((state_attr('input_datetime.f1_cotta_inizio', 'timestamp') | float(0)) - 86400) * 1000 %}
+        {%- set grezze = (state_attr('sensor.f1_cotta_letture', 'letture') or []) | selectattr('ts', '>=', da) | sort(attribute='ts') | list %}
+        {%- set ns = namespace(og=none, l=[]) %}
+        {%- for r in grezze if r.og %}{% set ns.og = mosto(r) | float %}{% endfor %}
+        {%- for r in grezze %}
+          {%- if r.og or r.strumento != 'rifrattometro' %}
+            {%- set sg = mosto(r) | float %}
+          {%- elif ns.og is not none %}
+            {%- set ob = brix(ns.og) | float %}
+            {%- set fb = brix(r.letta) | float / 1.04 %}
+            {%- set sg = 1 - 0.0044993 * ob + 0.011774 * fb + 0.00027581 * ob ** 2 - 0.0012717 * fb ** 2
+                         - 0.0000072800 * ob ** 3 + 0.000063293 * fb ** 3 %}
+          {%- else %}
+            {%- set sg = none %}
+          {%- endif %}
+          {%- set ns.l = ns.l + [dict(r, sg=sg | round(4) if sg is not none else none,
+                                      quando=(r.ts / 1000) | timestamp_custom('%d/%m %H:%M'))] %}
+        {%- endfor %}
+        {{- {'og': ns.og | round(4) if ns.og is not none else none, 'letture': ns.l} }}
+    sensor:
+      - name: "F1 Cotta Densità"
+        unique_id: f1_cotta_densita
+        icon: mdi:beer
+        unit_of_measurement: "SG"
+        state: >-
+          {%- set l = calcolo.letture | selectattr('sg', 'number') | list %}
+          {{- l[-1].sg if l else none }}
+        attributes:
+          og: "{{ calcolo.og }}"
+          attenuazione: >-
+            {%- set l = calcolo.letture | selectattr('sg', 'number') | list %}
+            {{- ((calcolo.og - l[-1].sg) / (calcolo.og - 1) * 100) | round(1) if l and calcolo.og and calcolo.og > 1.001 else none }}
+          letture: "{{ calcolo.letture }}"
+
+automation:
+  # Un profilo da file avviato da HA in Produzione (stato da idle a in_corso; lo script
+  # f1_v6_avvia_fermentazione scrive prima epoch e profilo attivo = profilo scelto): la vista Cotta lo
+  # segue. Non la cambiano Riprendi (da in_pausa), la temperatura costante, l'esperimento a gradino della
+  # Didattica e i test del collaudo: o non partono da idle, o il profilo attivo non è il file scelto, o la
+  # modalità non è Produzione.
+  - id: f1_cotta_segui_avvio
+    alias: "F1 Cotta - Segui l'avvio del profilo"
+    description: >-
+      Avviando un profilo da file in Produzione, copia ora di inizio e nome del profilo nei dati della cotta
+      e azzera il setpoint dell'Inkbird: la temperatura la tiene l'ESP32.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: input_select.f1_v6_stato_controllo
+        from: idle
+        to: in_corso
+    conditions:
+      - condition: state
+        entity_id: input_select.f1_v6_modalita
+        state: Produzione
+      - condition: state
+        entity_id: input_boolean.f1_v6_modo_costante
+        state: "off"
+      - condition: template
+        value_template: >-
+          {{ states('input_number.f1_v6_avvio_epoch') | int(0) > 0
+             and states('input_text.f1_v6_profilo_attivo') == states('input_select.f1_v6_profilo_scelto') }}
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.f1_cotta_inizio
+        data:
+          timestamp: "{{ states('input_number.f1_v6_avvio_epoch') | int }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.f1_cotta_profilo
+        data:
+          value: "{{ states('input_text.f1_v6_profilo_attivo') | regex_replace('[^A-Za-z0-9_-]', '') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.f1_cotta_inkbird
+        data:
+          value: 0

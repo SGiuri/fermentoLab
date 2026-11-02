@@ -1,0 +1,64 @@
+{
+  "fg_obiettivo": 1.006,
+  "profilo": [
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 12,
+      "duration_days": 4.75625
+    },
+    {
+      "step": "Diacetyl Rest",
+      "temp": 16,
+      "duration_days": 4.90486
+    },
+    {
+      "step": "Lagerizzazione",
+      "temp": 4,
+      "duration_days": 47.0625
+    }
+  ],
+  "eventi": [
+    {
+      "evento": "Scarico trub",
+      "step": "Fermentazione Primaria",
+      "giorni": 2.66,
+      "nota": "Fatto il 05/10: uscito solo liquido, a fermentazione attiva non c'era deposito"
+    },
+    {
+      "evento": "Diacetyl rest",
+      "step": "Diacetyl Rest",
+      "giorni": 0,
+      "nota": "Inkbird a 16 °C dalle 11:47 del 07/10, densimetro 1.0124 (73 %), fermentazione quasi ferma"
+    },
+    {
+      "evento": "FG ferma? Prova diacetile",
+      "step": "Lagerizzazione",
+      "giorni": 0,
+      "nota": "Densità ferma da 48 h e prova forzata pulita: termostato del chiller giù e Inkbird al freddo (a 2 °C il chiller non ci arriva: dal 23/10 lagerizzazione a 4 °C). Se no ancora 16 °C. Occhio al risucchio del gorgogliatore"
+    },
+    {
+      "evento": "Scarico lievito",
+      "step": "Lagerizzazione",
+      "giorni": 2.9375,
+      "nota": "Lievito compattato dal freddo: aprire piano, fermarsi quando esce birra limpida"
+    },
+    {
+      "evento": "Scarico",
+      "step": "Lagerizzazione",
+      "giorni": 9.9375,
+      "nota": "Piccolo, per tenere pulito il cono"
+    },
+    {
+      "evento": "Lagerizzazione minima",
+      "step": "Lagerizzazione",
+      "giorni": 14,
+      "nota": "Da qui si può imbottigliare, se è limpida e senza odore di zolfo"
+    },
+    {
+      "evento": "Imbottigliamento",
+      "step": "Lagerizzazione",
+      "giorni": 47.0625,
+      "nota": "Sabato 28/11, insieme alla witbier. Dopo 7 settimane al freddo il lievito è stanco: aggiungere una puntina di lievito secco neutro al priming. Priming calcolato a 16 °C, non a 4"
+    }
+  ]
+}

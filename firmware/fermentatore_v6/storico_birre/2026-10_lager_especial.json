@@ -1,0 +1,268 @@
+{
+  "id": "2026-10_lager_especial",
+  "nome": "Lager di ottobre (cerveza especial)",
+  "stato": "in lagerizzazione",
+  "stile": "Lager chiara in stile cerveza especial spagnola",
+  "lievito": "W-34/70 (dal nome del primo profilo, czech_pils_W34: da confermare)",
+  "fermentatore": "Conico inox 40 L con valvola di fondo. In Home Assistant è F1 fino al 17/10, poi F2",
+  "regolazione": "Inkbird (12 → 16 → 2 °C), chiller a glicole condiviso con la witbier dal 23/10. ESP32 di F1 in pausa dal 03/10",
+  "inizio": "2026-10-02T17:38:00+02:00",
+  "fine": "2026-11-28T10:00:00+01:00",
+  "fine_prevista": true,
+  "og": 1.047,
+  "fg_ricetta": 1.006,
+  "profilo": {
+    "nome": "cerveza_especial_ott26",
+    "inizio": "2026-10-02T17:38:00+02:00",
+    "fg_obiettivo": 1.006,
+    "profilo": [
+      {
+        "step": "Fermentazione Primaria",
+        "temp": 12,
+        "duration_days": 4.75625
+      },
+      {
+        "step": "Diacetyl Rest",
+        "temp": 16,
+        "duration_days": 4.90486
+      },
+      {
+        "step": "Lagerizzazione",
+        "temp": 4,
+        "duration_days": 47.0625
+      }
+    ],
+    "eventi": [
+      {
+        "evento": "Scarico trub",
+        "step": "Fermentazione Primaria",
+        "giorni": 2.66,
+        "nota": "Fatto il 05/10: uscito solo liquido, a fermentazione attiva non c'era deposito"
+      },
+      {
+        "evento": "Diacetyl rest",
+        "step": "Diacetyl Rest",
+        "giorni": 0,
+        "nota": "Inkbird a 16 °C dalle 11:47 del 07/10, densimetro 1.0124 (73 %), fermentazione quasi ferma"
+      },
+      {
+        "evento": "FG ferma? Prova diacetile",
+        "step": "Lagerizzazione",
+        "giorni": 0,
+        "nota": "Densità ferma da 48 h e prova forzata pulita: termostato del chiller giù e Inkbird al freddo (a 2 °C il chiller non ci arriva: dal 23/10 lagerizzazione a 4 °C). Se no ancora 16 °C. Occhio al risucchio del gorgogliatore"
+      },
+      {
+        "evento": "Scarico lievito",
+        "step": "Lagerizzazione",
+        "giorni": 2.9375,
+        "nota": "Lievito compattato dal freddo: aprire piano, fermarsi quando esce birra limpida"
+      },
+      {
+        "evento": "Scarico",
+        "step": "Lagerizzazione",
+        "giorni": 9.9375,
+        "nota": "Piccolo, per tenere pulito il cono"
+      },
+      {
+        "evento": "Lagerizzazione minima",
+        "step": "Lagerizzazione",
+        "giorni": 14,
+        "nota": "Da qui si può imbottigliare, se è limpida e senza odore di zolfo"
+      },
+      {
+        "evento": "Imbottigliamento",
+        "step": "Lagerizzazione",
+        "giorni": 47.0625,
+        "nota": "Sabato 28/11, insieme alla witbier. Dopo 7 settimane al freddo il lievito è stanco: aggiungere una puntina di lievito secco neutro al priming. Priming calcolato a 16 °C, non a 4"
+      }
+    ]
+  },
+  "serie": [
+    {
+      "entity": "sensor.f1_v6_temperatura",
+      "nome": "T parete (sonda F1)",
+      "asse": "temp",
+      "colore": "#e34948",
+      "spessore": 1,
+      "dal": "2026-10-02T17:38:00+02:00",
+      "al": "2026-10-23T11:00:00+02:00"
+    },
+    {
+      "entity": "sensor.ispindel_01_temperatura",
+      "nome": "T birra (iSpindel)",
+      "asse": "temp",
+      "colore": "#c98500",
+      "spessore": 1,
+      "dal": "2026-10-02T17:40:00+02:00"
+    },
+    {
+      "entity": "sensor.v7_temperatura_f2",
+      "nome": "T sonda F2",
+      "asse": "temp",
+      "colore": "#199e70",
+      "spessore": 2,
+      "dal": "2026-10-28T12:35:00+01:00"
+    },
+    {
+      "entity": "sensor.f2_cotta_setpoint_inkbird_storico",
+      "nome": "Setpoint Inkbird",
+      "asse": "temp",
+      "colore": "#199e70",
+      "spessore": 2,
+      "tratteggio": 6,
+      "gradini": true,
+      "dal": "2026-10-02T17:38:00+02:00"
+    },
+    {
+      "entity": "sensor.ispindel_01_densita",
+      "nome": "Densità (iSpindel)",
+      "asse": "sg",
+      "colore": "#a7652a",
+      "spessore": 2,
+      "dal": "2026-10-02T17:40:00+02:00"
+    }
+  ],
+  "letture": [
+    {
+      "quando": "2026-10-02 18:00",
+      "strumento": "densimetro",
+      "letta": 1.046,
+      "temp": 24,
+      "sg": 1.0469,
+      "og": true,
+      "nota": "OG, primo punto di taratura dell'iSpindel"
+    },
+    {
+      "quando": "2026-10-05 09:00",
+      "strumento": "densimetro",
+      "letta": 1.026,
+      "temp": 19,
+      "sg": 1.0258,
+      "og": false,
+      "nota": "Campione degassato, allo scarico del trub. L'iSpindel leggeva 1.0215"
+    },
+    {
+      "quando": "2026-10-06 08:55",
+      "strumento": "densimetro",
+      "letta": 1.016,
+      "temp": 16.3,
+      "sg": 1.0153,
+      "og": false,
+      "nota": ""
+    },
+    {
+      "quando": "2026-10-07 11:15",
+      "strumento": "densimetro",
+      "letta": 1.013,
+      "temp": 17,
+      "sg": 1.0124,
+      "og": false,
+      "nota": "Discesa quasi ferma"
+    },
+    {
+      "quando": "2026-10-08 10:45",
+      "strumento": "densimetro",
+      "letta": 1.012,
+      "temp": 17,
+      "sg": 1.0114,
+      "og": false,
+      "nota": "In diacetyl rest"
+    }
+  ],
+  "date": [
+    {
+      "quando": "2026-10-02 17:38",
+      "evento": "Inoculo, inizio del piano"
+    },
+    {
+      "quando": "2026-10-03 09:30",
+      "evento": "Partenza della fermentazione"
+    },
+    {
+      "quando": "2026-10-05 09:30",
+      "evento": "Scarico del trub"
+    },
+    {
+      "quando": "2026-10-07 11:47",
+      "evento": "Diacetyl rest a 16 °C"
+    },
+    {
+      "quando": "2026-10-13 12:00",
+      "evento": "Cold crash (Inkbird a 2 °C)"
+    },
+    {
+      "quando": "2026-10-17 12:00",
+      "evento": "Diventa F2 in Home Assistant"
+    },
+    {
+      "quando": "2026-11-28 10:00",
+      "evento": "Imbottigliamento (previsto)"
+    }
+  ],
+  "note": [
+    {
+      "quando": "2026-10-02 17:38",
+      "testo": "Mosto in F1, caricato come Czech Pils: profilo czech_pils_W34 avviato sull'ESP32. iSpindel 01 nella birra dalle 17:26. OG 1.047 (densimetro 1.046 a 24 °C)."
+    },
+    {
+      "quando": "2026-10-02 17:40",
+      "testo": "Dopo i guasti della sonda DS18B20 dell'1-2/10 la temperatura la tiene un Inkbird a 12 °C. La sonda di F1 è nastrata sulla parete inox sotto il neoprene: misura la parete, circa 1,3 °C sopra la birra."
+    },
+    {
+      "quando": "2026-10-03 09:30",
+      "testo": "Partenza della fermentazione. Nella fase di latenza la birra era stratificata di 2,5-3 °C (14,5-15 °C in alto, con l'Inkbird soddisfatto a 12): la CO2 l'ha rimescolata, poi uniforme a 11,6-11,9 °C."
+    },
+    {
+      "quando": "2026-10-03 15:47",
+      "testo": "ESP32 in pausa: i suoi relè pilotavano un altro recipiente e il freddo era acceso di continuo dal 02/10. Da qui regola solo l'Inkbird e nessun allarme di HA sorveglia la cotta."
+    },
+    {
+      "quando": "2026-10-03 19:20",
+      "testo": "Chiarito lo stile: lager tipo cerveza especial spagnola a 12 °C, non Czech Pils a 10 °C. Nuovo profilo cerveza_especial per il piano in HA (12 °C 5 giorni, 17 °C 3 giorni, 2 °C 21 giorni)."
+    },
+    {
+      "quando": "2026-10-05 09:30",
+      "testo": "Scarico del trub: uscito solo liquido (circa 0,1 L), a fermentazione attiva non c'era deposito al rubinetto. Densimetro 1.026 a 19 °C (1.0258), attenuazione circa 45 %. L'iSpindel leggeva 1.0215, circa 0,004 in meno: prima taratura vera fatta nella birra, e storico della densità ricalcolato."
+    },
+    {
+      "quando": "2026-10-06 08:55",
+      "testo": "Densimetro 1.016 a 16,3 °C (1.0153): terzo punto di taratura dell'iSpindel."
+    },
+    {
+      "quando": "2026-10-07 11:15",
+      "testo": "Densimetro 1.013 a 17 °C (1.0124), circa 73 %: la discesa è quasi ferma (−0,0006 in 16 ore). FG di ricetta 1.006. Taratura dell'iSpindel passata a una quadratica su 4 punti."
+    },
+    {
+      "quando": "2026-10-07 11:47",
+      "testo": "Inkbird a 16 °C: diacetyl rest. Il piano in HA diventa cerveza_especial_ott26, che segue il calendario vero. Decisione: freddo lunedì 12/10 alle 9:30, e nel weekend la birra resta a 16 °C."
+    },
+    {
+      "quando": "2026-10-08 10:35",
+      "testo": "Sonda di F1 spostata circa 10 cm più in basso sulla parete: i confronti parete-birra prima e dopo non sono omogenei."
+    },
+    {
+      "quando": "2026-10-08 10:45",
+      "testo": "Densimetro 1.012 a 17 °C (1.0114), circa 76 %: scende ancora, piano. Birra di nuovo stratificata di circa 2,5 °C (Inkbird 16,4 °C, iSpindel in alto 18,9 °C). Sesto punto di taratura dell'iSpindel."
+    },
+    {
+      "quando": "2026-10-13 12:00",
+      "testo": "Cold crash, un giorno dopo il piano: Inkbird a 2 °C. L'iSpindel vede 17,9 → 3,3 °C in 6 ore e 0-0,2 °C dalle 4 del 14/10; la parete resta a circa 7 °C."
+    },
+    {
+      "quando": "2026-10-15 00:57",
+      "testo": "iSpindel muto. Il segnale era già al limite (−86 dBm) e il recipiente era avvolto in plastica e teli, con chiusa la porta verso l'aula dell'access point. Tolta parte della plastica e aperta la porta: due letture alle 18:43 e alle 18:57, poi di nuovo silenzio. Consiglio: isolare solo i lati, con il coperchio scoperto e asciutto."
+    },
+    {
+      "quando": "2026-10-17 12:00",
+      "testo": "In Home Assistant la lager diventa F2 (dashboard F2 Cotta): Inkbird non sorvegliato e iSpindel, nessun allarme per scelta. L'ESP32 di F1 viene fermato e liberato per la seconda cotta."
+    },
+    {
+      "quando": "2026-10-23 17:00",
+      "testo": "Il chiller a glicole è condiviso con la witbier: mentre raffreddava il mosto della witbier la lager è salita da 1,3 a 4,5 °C in circa un'ora. Lagerizzazione portata a 4 °C nel piano (con la pompa dell'Inkbird sempre accesa il chiller non scende sotto 3-4 °C) e imbottigliamento spostato a sabato 28/11 alle 10, insieme alla witbier. Al priming: un po' di lievito secco neutro, perché dopo 7 settimane al freddo il lievito è stanco."
+    },
+    {
+      "quando": "2026-10-28 12:35",
+      "testo": "Sonda DS18B20 del nodo sensori V7 (sensore 5) in F2: diventa la misura principale della temperatura. Legge vicino al setpoint dell'Inkbird (2,2-2,5 °C con 2,0), l'iSpindel circa 3 °C in più."
+    }
+  ]
+}

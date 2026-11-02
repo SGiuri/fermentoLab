@@ -1,0 +1,617 @@
+# =============================================================================
+# Dashboard "Storico birre" — tutte le birre fatte, una scheda per birra
+# Si sceglie la birra dal menu. Per ognuna: dati, date chiave, temperature e densità dall'inizio alla fine
+# (misure e piano teorico), letture manuali, piano con le sue date, note (si aggiungono da qui) e il profilo,
+# che si può riscrivere in /config/profili_fermentazione per rifarla.
+#
+# Dati: pacchetto storico_birre.yaml (sensor.storico_birra, sensor.storico_birra_note), che legge le schede
+# in /config/storico_birre/<id>.json. Le curve misurate vengono dalle statistiche orarie di HA (non vengono
+# cancellate): ogni curva legge solo il periodo dal/al scritto nella scheda, perché la stessa entità può
+# aver misurato birre diverse (la sonda di F1 è stata sulla lager fino al 23/10, poi nella witbier).
+# Richiede config-template-card e apexcharts-card (data_generator asincrono: legge le statistiche con callWS).
+#
+# I grafici hanno posti fissi (6 per le temperature, 2 per la densità), ognuno con la sua entità
+# sensor.storico_birra_curva_<posto> che porta la curva della scheda: apexcharts passa a data_generator solo
+# lo stato dell'entità della serie. I posti vuoti non si disegnano. Nel codice dei grafici niente template
+# literal JS: config-template-card li interpreterebbe lui.
+# Birra chiusa ("Chiudi la birra"): curve e letture vengono dalla scheda e dal file in /local, non più da HA.
+# Le funzioni GIORNI e giorni_adatta sono copie di quelle di F1 Cotta e F2 Cotta (con l'inizio come
+# parametro): se ne correggi una, correggi anche le altre.
+# =============================================================================
+title: Storico birre
+views:
+
+  - title: Storico
+    path: storico
+    icon: mdi:book-open-variant
+    type: panel
+    cards:
+      - type: vertical-stack
+        cards:
+
+          - type: entities
+            entities:
+              - entity: input_select.storico_birra
+                name: Birra
+
+          # ── SCHEDA: i dati della birra ──────────────────────────────────
+          - type: markdown
+            content: |
+              {%- set a = states.sensor.storico_birra.attributes if states.sensor.storico_birra is not none else {} %}
+              {%- if not a.get('id') %}
+              Nessuna scheda. Le schede sono i file in /config/storico_birre (vedi firmware/fermentatore_v6/storico_birre/README.md).
+              {%- else %}
+              {%- set i = as_datetime(a.inizio) | as_local %}
+              {%- set f = as_datetime(a.fine) | as_local if a.fine else none %}
+              {%- set ora = now() %}
+              {%- set giorni = ((f if f else ora) - i).total_seconds() / 86400 %}
+              {%- set lt = state_attr(a.letture_live, 'letture') if a.letture_live else none %}
+              {%- set letture = lt if lt is not none else a.letture %}
+              {%- set con_sg = letture | selectattr('sg', 'number') | rejectattr('og') | list %}
+              {%- set og = a.og if a.og is number else state_attr(a.letture_live, 'og') if a.letture_live else none %}
+              {%- set fgo = (a.profilo or {}).get('fg_obiettivo') %}
+              ## {{ states('sensor.storico_birra') }}
+              **{{ a.stato }}** · {{ a.stile }}
+              {%- if a.cristallizzata %}
+
+              🔒 Birra chiusa il {{ (as_datetime(a.cristallizzata) | as_local).strftime('%d/%m/%Y %H:%M') }}: dati,
+              curve e letture sono quelli di quel momento. Si possono solo aggiungere note.
+              {%- else %}
+
+              Birra in corso: curve e letture si aggiornano. A fine birra, **Chiudi la birra** (in fondo) la cristallizza.
+              {%- endif %}
+
+              | | |
+              |---|---|
+              | Lievito | {{ a.lievito }} |
+              | Fermentatore | {{ a.fermentatore }} |
+              | Regolazione | {{ a.regolazione }} |
+              | Inizio | {{ i.strftime('%d/%m/%Y %H:%M') }} |
+              | Fine | {{ f.strftime('%d/%m/%Y %H:%M') ~ (' (prevista)' if a.fine_prevista else '') if f else '—' }} |
+              | Durata | {{ '%.1f' | format(giorni) }} giorni{{ ' · oggi è il giorno %d' | format(((ora - i).total_seconds() / 86400) | int + 1) if f and ora < f and ora > i else '' }} |
+              | OG | {{ '%.3f' | format(og) if og is number else 'non registrata' }} |
+              | FG | {{ 'ricetta %.3f' | format(a.fg_ricetta) if a.fg_ricetta is number else '' }}{{ ' · ' if a.fg_ricetta is number and fgo is number else '' }}{{ 'obiettivo del piano %.3f' | format(fgo) if fgo is number else '' }}{{ '' if a.fg_ricetta is number or fgo is number else '—' }} |
+              | Ultima densità misurata | {{ ('%.4f' | format(con_sg[-1].sg)) ~ (' (attenuazione apparente %.0f %%)' | format((og - con_sg[-1].sg) / (og - 1) * 100) if og is number and og > 1.001 else '') if con_sg | count > 0 else '—' }} |
+              | Profilo | {{ (a.profilo or {}).get('nome', '—') }} |
+              {%- endif %}
+
+          # ── DATE CHIAVE ─────────────────────────────────────────────────
+          - type: markdown
+            content: |
+              {%- set d = state_attr('sensor.storico_birra', 'date') or [] %}
+              {%- if d | count > 0 %}
+              {%- set gg = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'] %}
+              ### Date chiave
+
+              | | Quando | |
+              |---|---|---|
+              {%- for e in d | sort(attribute='quando') %}
+              {%- set q = as_datetime(e.quando) %}
+              | {{ '✓' if q.strftime('%Y-%m-%d %H:%M') <= now().strftime('%Y-%m-%d %H:%M') else '' }} | {{ gg[q.weekday()] }} {{ q.strftime('%d/%m/%Y %H:%M') }} | {{ e.evento }} |
+              {%- endfor %}
+              {%- endif %}
+
+          # ── TEMPERATURE: misure e piano, dall'inizio alla fine ──────────
+          - type: custom:config-template-card
+            entities:
+              - sensor.storico_birra
+              - sensor.storico_birra_curva_t1
+              - sensor.storico_birra_curva_t2
+              - sensor.storico_birra_curva_t3
+              - sensor.storico_birra_curva_t4
+              - sensor.storico_birra_curva_t5
+              - sensor.storico_birra_curva_t6
+              - sensor.storico_birra_curva_sg1
+              - sensor.storico_birra_curva_sg2
+            variables:
+              # Finestra della scheda: dall'inizio alla fine (prevista o vera). Se una birra in corso supera la
+              # fine prevista, la finestra arriva a ora.
+              F: &finestra >-
+                (function () { var s = states['sensor.storico_birra']; var a = s ? s.attributes : {};
+                var t0 = Date.parse(a.inizio) || Date.now() - 86400000;
+                var t1 = Date.parse(a.fine) || Date.now();
+                if (a.fine_prevista && Date.now() > t1) t1 = Date.now();
+                if (t1 < t0 + 3600000) t1 = t0 + 86400000;
+                var m = Math.ceil((t1 - t0) / 60000);
+                var sp = Math.round((t0 + m * 60000 - Date.now()) / 60000);
+                return { t0: t0, t1: t0 + m * 60000, durata: m + 'min',
+                  sposta: (sp >= 0 ? '+' : '-') + Math.abs(sp) + 'min', nome: s ? s.state : '' }; })()
+              # La curva del posto (t1-t6, sg1-sg2), dall'entità sensor.storico_birra_curva_<posto>. Posto vuoto,
+              # o birra aperta con un'entità che non esiste più in HA: non si disegna.
+              SLOT: &slot >-
+                (function (posto) { var e = states['sensor.storico_birra_curva_' + posto];
+                var x = e && e.attributes.serie; var sch = states['sensor.storico_birra'];
+                var chiusa = sch && sch.attributes.curve;
+                if (!x || !x.entity || !(chiusa || states[x.entity])) return { nome: '-', colore: '#898781',
+                  spessore: 0, tratto: 0, curva: 'straight', usata: false };
+                return { nome: x.nome, colore: x.colore || '#898781', spessore: x.spessore || 2,
+                  tratto: x.tratteggio || 0, curva: x.gradini ? 'stepline' : 'straight', usata: true }; })
+              # Griglia: una linea a ogni mezzanotte da `da` a `fine`, più spessa il lunedì, con la data (gg/mm)
+              # nella riga delle date al posto di quelle di ApexCharts. Come GIORNI di F1 Cotta, con l'inizio
+              # come parametro; quali linee e date mostrare lo decide giorni_adatta, sotto.
+              GIORNI: &giorni >-
+                (function (da, fine) {
+                var linee = [];
+                if (!(da > 0) || !(fine > da)) return linee;
+                for (var g = new Date(da); g.setHours(0, 0, 0, 0) <= fine; g.setDate(g.getDate() + 1)) {
+                  var x = g.getTime(), d = g.getDay();
+                  if (x < da) continue;
+                  var lunedi = d === 1;
+                  linee.push({ id: lunedi ? 'settimana' : d === 3 || d === 5 ? 'giorno-2' : 'giorno-1',
+                    x: x, strokeDashArray: 0, borderWidth: lunedi ? 2 : 1,
+                    borderColor: lunedi ? 'rgba(137,135,129,0.7)' : 'rgba(137,135,129,0.3)',
+                    label: { text: ('0' + g.getDate()).slice(-2) + '/' + ('0' + (g.getMonth() + 1)).slice(-2),
+                      orientation: 'horizontal', position: 'bottom', offsetY: 24, borderWidth: 0,
+                      style: { color: '#898781', background: 'transparent', fontSize: '12px' } } });
+                }
+                return linee; })
+              # Date chiave della scheda come linee tratteggiate con l'etichetta in verticale.
+              DATE: &date >-
+                (function () { var s = states['sensor.storico_birra'];
+                return ((s && s.attributes.date) || []).map(function (e) {
+                  return { x: Date.parse(e.quando.replace(' ', 'T')), borderColor: '#898781', strokeDashArray: 4,
+                    label: { text: e.evento, orientation: 'vertical', borderWidth: 0,
+                      style: { color: '#898781', background: 'transparent' } } }; }); })()
+            card:
+              type: custom:apexcharts-card
+              graph_span: "${F.durata}"
+              span:
+                offset: "${F.sposta}"
+              update_interval: 30min
+              header:
+                show: true
+                title: "${'Temperature: ' + F.nome}"
+                show_states: false
+              now:
+                show: true
+              apex_config:
+                chart:
+                  height: 380
+                  # Come giorni_adatta di F1 Cotta: linee una al giorno se distano almeno 12 px, se no una ogni
+                  # 2 giorni, se no solo i lunedì; date tutte se non si toccano, se no solo i lunedì, se no
+                  # nessuna. Le date di ApexCharts restano nascoste (tengono solo lo spazio della riga).
+                  events:
+                    mounted: &giorni_adatta >-
+                      EVAL:function (chart) {
+                      var el = chart.el, w = chart.w.globals, larghezza = w.gridWidth;
+                      if (!el || !(larghezza > 0) || !(w.maxX > w.minX)) return;
+                      var giorno = larghezza * 86400000 / (w.maxX - w.minX);
+                      var tutti = function (sel) { return [].slice.call(el.querySelectorAll(sel)); };
+                      tutti('line.giorno-1').forEach(function (n) { n.style.display = giorno >= 12 ? '' : 'none'; });
+                      tutti('line.giorno-2').forEach(function (n) { n.style.display = giorno >= 6 ? '' : 'none'; });
+                      tutti('line.settimana').forEach(function (n) { n.setAttribute('stroke-width', 2); });
+                      tutti('text.apexcharts-xaxis-label').forEach(function (n) { n.style.visibility = 'hidden'; });
+                      var tela = document.createElement('canvas').getContext('2d');
+                      var box = function (n) {
+                        var t = (n.querySelector('tspan') || n).textContent.trim();
+                        tela.font = (n.getAttribute('font-size') || '12px') + ' ' + (n.getAttribute('font-family') || 'sans-serif');
+                        var m = tela.measureText(t).width / 2, c = parseFloat(n.getAttribute('x'));
+                        return [c - m, c + m]; };
+                      var dentro = function (b) { return b[0] >= 0 && b[1] <= larghezza; };
+                      var gruppi = { tutti: ['settimana', 'giorno-2', 'giorno-1'], lunedi: ['settimana'] };
+                      var scelta = ['tutti', 'lunedi'].find(function (k) {
+                        var bb = gruppi[k].reduce(function (s, id) { return s.concat(tutti('text.' + id)); }, [])
+                          .map(box).filter(dentro).sort(function (a, b) { return a[0] - b[0]; });
+                        for (var i = 1; i < bb.length; i++) if (bb[i][0] < bb[i - 1][1] + 6) return false;
+                        return bb.length > 0; });
+                      ['settimana', 'giorno-2', 'giorno-1'].forEach(function (id) {
+                        tutti('text.' + id).forEach(function (n) {
+                          n.style.display = scelta && gruppi[scelta].indexOf(id) >= 0 && dentro(box(n)) ? '' : 'none'; }); }); }
+                    updated: *giorni_adatta
+                legend:
+                  show: true
+                annotations:
+                  xaxis: "${GIORNI(F.t0, F.t1).concat(DATE)}"
+              yaxis:
+                - id: temp
+                  decimals: 0
+                  apex_config:
+                    forceNiceScale: true
+              series:
+                # Il piano teorico, dal profilo della scheda: le rampe partono dalla temperatura dello step
+                # precedente, finito il profilo resta l'ultima (come calcolaSetpoint() nel firmware).
+                - entity: sensor.storico_birra
+                  name: Piano
+                  yaxis_id: temp
+                  color: "#2a78d6"
+                  stroke_width: 2
+                  curve: straight
+                  float_precision: 1
+                  show:
+                    legend_value: false
+                  data_generator: |
+                    const sch = hass.states['sensor.storico_birra'];
+                    const pr = sch && sch.attributes.profilo;
+                    const passi = (pr && pr.profilo) || [];
+                    const t0 = pr && pr.inizio ? Date.parse(pr.inizio) : 0;
+                    if (!t0 || !passi.length) return [];
+                    const punti = [];
+                    let t = t0;
+                    let prec = passi[0].temp;
+                    for (const p of passi) {
+                      const rampa = p.ramp_days != null || p.ramp_hours != null;
+                      const ore = p.ramp_days != null ? p.ramp_days * 24
+                        : p.ramp_hours != null ? p.ramp_hours
+                        : p.duration_days != null ? p.duration_days * 24 : (p.duration_hours || 0);
+                      punti.push([t, rampa ? prec : p.temp]);
+                      t += ore * 3600000;
+                      punti.push([t, p.temp]);
+                      prec = p.temp;
+                    }
+                    const da = Math.max(start.getTime(), t0);
+                    const fino = end.getTime();
+                    if (fino <= da) return [];
+                    punti.push([Math.max(t, fino), prec]);
+                    const valore = (x) => {
+                      for (let i = 1; i < punti.length; i++) {
+                        if (x <= punti[i][0]) {
+                          const [x0, y0] = punti[i - 1];
+                          const [x1, y1] = punti[i];
+                          return x1 > x0 ? y0 + (y1 - y0) * (x - x0) / (x1 - x0) : y1;
+                        }
+                      }
+                      return prec;
+                    };
+                    return [[da, valore(da)]]
+                      .concat(punti.filter((q) => q[0] > da && q[0] < fino))
+                      .concat([[fino, valore(fino)]]);
+                # Le misure: medie orarie, solo tra dal e al della curva. Birra aperta: dalle statistiche di HA.
+                # Birra chiusa: dal file con le curve copiate alla chiusura (attributo curve), scaricato una volta.
+                - entity: sensor.storico_birra_curva_t1
+                  name: "${SLOT('t1').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t1').colore}"
+                  stroke_width: "${SLOT('t1').spessore}"
+                  stroke_dash: "${SLOT('t1').tratto}"
+                  curve: "${SLOT('t1').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t1').usata}"
+                    legend_value: false
+                  data_generator: &misura |
+                    const s = (entity && entity.attributes.serie) || {};
+                    if (!s.entity) return [];
+                    const sch = hass.states['sensor.storico_birra'];
+                    const url = sch && sch.attributes.curve;
+                    const da = Math.max(start.getTime(), Date.parse(s.dal));
+                    const fino = Math.min(end.getTime(), s.al ? Date.parse(s.al) : Date.now());
+                    if (!(fino > da)) return [];
+                    if (url) {
+                      const cache = window.storicoBirreCurve || (window.storicoBirreCurve = {});
+                      if (!cache[url]) cache[url] = fetch(url).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+                      const c = await cache[url];
+                      return ((c.curve || {})[s.entity + '|' + s.dal] || []).filter((q) => q[0] >= da && q[0] <= fino);
+                    }
+                    const r = await hass.callWS({ type: 'recorder/statistics_during_period',
+                      start_time: new Date(da).toISOString(), end_time: new Date(fino).toISOString(),
+                      statistic_ids: [s.entity], period: 'hour', types: ['mean'] });
+                    return (r[s.entity] || []).filter((p) => p.mean != null)
+                      .map((p) => [s.gradini ? p.start : (p.start + p.end) / 2, p.mean]);
+                - entity: sensor.storico_birra_curva_t2
+                  name: "${SLOT('t2').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t2').colore}"
+                  stroke_width: "${SLOT('t2').spessore}"
+                  stroke_dash: "${SLOT('t2').tratto}"
+                  curve: "${SLOT('t2').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t2').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                - entity: sensor.storico_birra_curva_t3
+                  name: "${SLOT('t3').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t3').colore}"
+                  stroke_width: "${SLOT('t3').spessore}"
+                  stroke_dash: "${SLOT('t3').tratto}"
+                  curve: "${SLOT('t3').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t3').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                - entity: sensor.storico_birra_curva_t4
+                  name: "${SLOT('t4').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t4').colore}"
+                  stroke_width: "${SLOT('t4').spessore}"
+                  stroke_dash: "${SLOT('t4').tratto}"
+                  curve: "${SLOT('t4').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t4').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                - entity: sensor.storico_birra_curva_t5
+                  name: "${SLOT('t5').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t5').colore}"
+                  stroke_width: "${SLOT('t5').spessore}"
+                  stroke_dash: "${SLOT('t5').tratto}"
+                  curve: "${SLOT('t5').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t5').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                - entity: sensor.storico_birra_curva_t6
+                  name: "${SLOT('t6').nome}"
+                  yaxis_id: temp
+                  color: "${SLOT('t6').colore}"
+                  stroke_width: "${SLOT('t6').spessore}"
+                  stroke_dash: "${SLOT('t6').tratto}"
+                  curve: "${SLOT('t6').curva}"
+                  float_precision: 1
+                  show:
+                    in_chart: "${SLOT('t6').usata}"
+                    legend_value: false
+                  data_generator: *misura
+
+          # ── DENSITÀ: stessa finestra ────────────────────────────────────
+          # Curve della scheda sull'asse sg (iSpindel) e, come punti, le letture manuali già corrette. Linee
+          # tratteggiate: OG e FG (ricetta e obiettivo del piano).
+          - type: custom:config-template-card
+            entities:
+              - sensor.storico_birra
+              - sensor.storico_birra_curva_t1
+              - sensor.storico_birra_curva_t2
+              - sensor.storico_birra_curva_t3
+              - sensor.storico_birra_curva_t4
+              - sensor.storico_birra_curva_t5
+              - sensor.storico_birra_curva_t6
+              - sensor.storico_birra_curva_sg1
+              - sensor.storico_birra_curva_sg2
+            variables:
+              F: *finestra
+              SLOT: *slot
+              GIORNI: *giorni
+              DATE: *date
+              LIVELLI: >-
+                (function () { var s = states['sensor.storico_birra']; var a = s ? s.attributes : {};
+                var live = a.letture_live ? states[a.letture_live] : null;
+                var og = parseFloat(a.og);
+                if (!(og > 1) && live) og = parseFloat(live.attributes.og);
+                var fgr = parseFloat(a.fg_ricetta);
+                var fgo = parseFloat(a.profilo && a.profilo.fg_obiettivo);
+                var linea = function (y, testo, sotto) {
+                  return { y: y, borderColor: '#a7652a', strokeDashArray: 6,
+                    label: { text: testo, position: 'left', textAnchor: 'start', borderWidth: 0,
+                      offsetY: sotto ? 18 : 0, style: { color: '#a7652a', background: 'transparent' } } }; };
+                var att = function (fg) { return og > 1 ? ' (attenuazione ' + Math.round((og - fg) / (og - 1) * 100) + ' %)' : ''; };
+                var l = [];
+                if (og > 1) l.push(linea(og, 'OG ' + og.toFixed(3), true));
+                if (fgr > 0.98) l.push(linea(fgr, 'FG ricetta ' + fgr.toFixed(3) + att(fgr), true));
+                if (fgo > 0.98 && fgo !== fgr) l.push(linea(fgo, 'FG obiettivo ' + fgo.toFixed(3) + att(fgo), false));
+                return l; })()
+            card:
+              type: custom:apexcharts-card
+              graph_span: "${F.durata}"
+              span:
+                offset: "${F.sposta}"
+              update_interval: 30min
+              header:
+                show: true
+                title: Densità
+                show_states: false
+              now:
+                show: true
+              apex_config:
+                chart:
+                  height: 240
+                  events:
+                    mounted: *giorni_adatta
+                    updated: *giorni_adatta
+                # Solo le letture manuali hanno i punti: sono poche, si vedono anche quando sono una sola.
+                markers:
+                  size: [0, 0, 5]
+                legend:
+                  show: true
+                annotations:
+                  xaxis: "${GIORNI(F.t0, F.t1).concat(DATE)}"
+                  yaxis: "${LIVELLI}"
+              yaxis:
+                - id: sg
+                  decimals: 3
+                  min: "~1.000"
+                  max: "~1.050"
+              series:
+                - entity: sensor.storico_birra_curva_sg1
+                  name: "${SLOT('sg1').nome}"
+                  yaxis_id: sg
+                  color: "${SLOT('sg1').colore}"
+                  stroke_width: "${SLOT('sg1').spessore}"
+                  curve: straight
+                  float_precision: 4
+                  show:
+                    in_chart: "${SLOT('sg1').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                - entity: sensor.storico_birra_curva_sg2
+                  name: "${SLOT('sg2').nome}"
+                  yaxis_id: sg
+                  color: "${SLOT('sg2').colore}"
+                  stroke_width: "${SLOT('sg2').spessore}"
+                  curve: straight
+                  float_precision: 4
+                  show:
+                    in_chart: "${SLOT('sg2').usata}"
+                    legend_value: false
+                  data_generator: *misura
+                # Letture manuali: dalla dashboard Cotta finché la birra è in corso (letture_live), se no
+                # quelle copiate nella scheda.
+                - entity: sensor.storico_birra
+                  name: Letture manuali
+                  yaxis_id: sg
+                  color: "#5b3a1e"
+                  stroke_width: 1
+                  curve: straight
+                  float_precision: 4
+                  show:
+                    legend_value: false
+                  data_generator: |
+                    const a = entity.attributes;
+                    const live = a.letture_live ? hass.states[a.letture_live] : null;
+                    const righe = live ? (live.attributes.letture || [])
+                      : (a.letture || []).map((r) => Object.assign({}, r, { ts: Date.parse(r.quando.replace(' ', 'T')) }));
+                    return righe.filter((r) => typeof r.sg === 'number' && r.ts > 0)
+                      .map((r) => [r.ts, r.sg]).sort((p, q) => p[0] - q[0]);
+
+          # Le letture una per una.
+          - type: markdown
+            content: |
+              {%- set a = states.sensor.storico_birra.attributes if states.sensor.storico_birra is not none else {} %}
+              {%- set lt = state_attr(a.letture_live, 'letture') if a.get('letture_live') else none %}
+              {%- set letture = lt if lt is not none else a.get('letture', []) %}
+              {%- set og = a.og if a.og is number else state_attr(a.letture_live, 'og') if a.get('letture_live') else none %}
+              {%- set nomi = {'rifrattometro': 'rifrattometro', 'densimetro': 'densimetro', 'corretta': 'già corretta'} %}
+              {%- if letture | count > 0 %}
+              ### Letture manuali della densità
+              {%- if lt is not none %}
+
+              Birra in corso: le letture sono quelle registrate nella sua dashboard Cotta.
+              {%- endif %}
+
+              | Prelievo | Strumento | Letta | SG corretta | Att. | Nota |
+              |---|---|--:|--:|--:|---|
+              {%- for r in letture %}
+              | {{ r.quando }}{{ ' · **OG**' if r.og else '' }} | {{ nomi.get(r.strumento, r.strumento) }} | {{ '%.3f' | format(r.letta) }}{{ ' a %.1f °C' | format(r.temp) if r.strumento == 'densimetro' and r.temp > 0 else '' }} | {{ '%.4f' | format(r.sg) if r.sg is number else '—' }} | {{ '%.0f %%' | format((og - r.sg) / (og - 1) * 100) if og is number and og > 1.001 and r.sg is number and not r.og else '' }} | {{ r.nota }} |
+              {%- endfor %}
+              {%- endif %}
+
+          # ── PIANO TEORICO: gli step e le date chiave del profilo ────────
+          - type: markdown
+            content: |
+              {%- set pr = state_attr('sensor.storico_birra', 'profilo') or {} %}
+              {%- set passi = pr.get('profilo', []) %}
+              {%- if pr.get('inizio') and passi | count > 0 %}
+              {%- set t0 = as_timestamp(pr.inizio) %}
+              {%- set ora = now().timestamp() %}
+              {%- set ns = namespace(t=t0, prec=passi[0].temp, righe='') %}
+              {%- for p in passi %}
+                {%- set rampa = p.ramp_days is defined or p.ramp_hours is defined %}
+                {%- set ore = p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                              else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0) %}
+                {%- set fine = ns.t + ore * 3600 %}
+                {%- if rampa and ore > 0 %}
+                  {%- set temp = '%.1f → %.1f °C (%+.1f °C al giorno)' | format(ns.prec, p.temp, (p.temp - ns.prec) / ore * 24) %}
+                {%- else %}
+                  {%- set temp = '%.1f °C' | format(p.temp) %}
+                {%- endif %}
+                {%- set nome = '▶ **' ~ p.step ~ '**' if ns.t <= ora < fine else p.step %}
+                {%- set ns.righe = ns.righe ~ '\n| ' ~ nome ~ ' | ' ~ ns.t | timestamp_custom('%d/%m %H:%M') ~ ' | '
+                                   ~ fine | timestamp_custom('%d/%m %H:%M') ~ ' | ' ~ '%.1f' | format(ore / 24) ~ ' | ' ~ temp ~ ' |' %}
+                {%- set ns.prec = p.temp %}
+                {%- set ns.t = fine %}
+              {%- endfor %}
+              ### Piano teorico: {{ pr.get('nome', '') }}
+
+              Inizio del piano {{ t0 | timestamp_custom('%d/%m/%Y %H:%M') }}, {{ '%.1f' | format((ns.t - t0) / 86400) }} giorni.
+              {%- if pr.get('fg_obiettivo') %} FG obiettivo {{ '%.3f' | format(pr.fg_obiettivo) }}.{% endif %}
+
+              | Step | Dal | Al | Giorni | Temperatura |
+              |---|---|---|--:|---|{{ ns.righe }}
+              {%- set eventi = pr.get('eventi', []) %}
+              {%- if eventi | count > 0 %}
+              {%- set ev = namespace(righe='') %}
+              {%- for e in eventi %}
+                {%- set q = namespace(t=t0, base=none) %}
+                {%- for p in passi %}
+                  {%- if q.base is none and p.step == e.step %}{% set q.base = q.t %}{% endif %}
+                  {%- set q.t = q.t + (p.ramp_days * 24 if p.ramp_days is defined else p.ramp_hours if p.ramp_hours is defined
+                                       else p.duration_days * 24 if p.duration_days is defined else p.duration_hours | default(0)) * 3600 %}
+                {%- endfor %}
+                {%- set quando = (q.base if q.base is not none else t0) + (e.giorni | default(0)) * 86400 %}
+                {%- set giorno = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][(quando | timestamp_custom('%u') | int) - 1] %}
+                {%- set ev.righe = ev.righe ~ '\n| ' ~ e.evento ~ ' | ' ~ giorno ~ ' ' ~ quando | timestamp_custom('%d/%m %H:%M')
+                                   ~ ' | ' ~ e.nota | default('') ~ ' |' %}
+              {%- endfor %}
+
+              **Date del piano**
+
+              | Evento | Quando | Cosa fare |
+              |---|---|---|{{ ev.righe }}
+              {%- endif %}
+              {%- endif %}
+
+          # ── NOTE: cosa è successo e cosa si è deciso ────────────────────
+          - type: markdown
+            content: |
+              {%- set note = state_attr('sensor.storico_birra_note', 'note') or [] %}
+              {%- set gg = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'] %}
+              ### Note
+              {% if note | count == 0 -%}
+              Nessuna nota. Aggiungile con **Aggiungi una nota**, qui sotto.
+              {%- else -%}
+              {%- for n in note | sort(attribute='quando') %}
+              {%- set q = as_datetime(n.quando) %}
+
+              **{{ gg[q.weekday()] }} {{ q.strftime('%d/%m/%Y %H:%M') }}** · {{ n.testo }}
+              {%- endfor %}
+              {%- endif %}
+          # Pulsanti come tile in riga: altezza fissa anche a tutta larghezza (i button, in una vista a pannello,
+          # diventavano quadrati grandi mezza pagina). Icona e card fanno la stessa cosa: mai avviare lo script
+          # direttamente (il tocco sull'icona di un tile di script, di serie, lo lancerebbe).
+          - type: horizontal-stack
+            cards:
+              - type: tile
+                entity: script.storico_birre_aggiungi_nota
+                name: Aggiungi una nota
+                icon: mdi:note-plus-outline
+                hide_state: true
+                tap_action:
+                  action: more-info
+                icon_tap_action:
+                  action: more-info
+              - type: tile
+                entity: script.storico_birre_elimina_ultima_nota
+                name: Elimina l'ultima aggiunta
+                icon: mdi:undo
+                hide_state: true
+                tap_action: &conferma_elimina_nota
+                  action: perform-action
+                  perform_action: script.storico_birre_elimina_ultima_nota
+                  confirmation:
+                    text: Eliminare l'ultima nota aggiunta a questa birra?
+                icon_tap_action: *conferma_elimina_nota
+
+          # ── PROFILO: per rifarla ────────────────────────────────────────
+          - type: markdown
+            content: |
+              {%- set pr = state_attr('sensor.storico_birra', 'profilo') or {} %}
+              {%- if pr.get('profilo') %}
+              ### Profilo {{ pr.get('nome', '') }}
+
+              Il profilo com'era per questa birra. **Ripristina il profilo** lo riscrive in
+              /config/profili_fermentazione/{{ pr.get('nome', '') }}.json (se c'è già un file diverso con quel nome,
+              lo scrive accanto con l'id della birra nel nome). Per avviarlo dalla vista Fermentazione il nome va
+              aggiunto alle opzioni del profilo scelto (configuration.yaml).
+
+              ```json
+              {{ {'fg_obiettivo': pr.get('fg_obiettivo'), 'profilo': pr.profilo, 'eventi': pr.get('eventi', [])} | to_json(pretty_print=true) }}
+              ```
+              {%- endif %}
+          # Chiudi la birra: a fine birra copia curve e letture nella scheda e la fissa (script
+          # storico_birre_chiudi, con dialogo).
+          - type: horizontal-stack
+            cards:
+              - type: tile
+                entity: script.storico_birre_ripristina_profilo
+                name: Ripristina il profilo
+                icon: mdi:file-restore-outline
+                hide_state: true
+                tap_action: &conferma_ripristina
+                  action: perform-action
+                  perform_action: script.storico_birre_ripristina_profilo
+                  confirmation:
+                    text: Riscrivere il profilo di questa birra in /config/profili_fermentazione?
+                icon_tap_action: *conferma_ripristina
+              - type: tile
+                entity: script.storico_birre_chiudi
+                name: Chiudi la birra (cristallizza la scheda)
+                icon: mdi:archive-lock-outline
+                hide_state: true
+                tap_action:
+                  action: more-info
+                icon_tap_action:
+                  action: more-info

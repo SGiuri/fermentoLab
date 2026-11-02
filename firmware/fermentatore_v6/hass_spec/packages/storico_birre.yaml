@@ -1,0 +1,374 @@
+# =============================================================================
+# Pacchetto Home Assistant — STORICO BIRRE
+#
+# Dati per la dashboard "Storico birre" (storico_birre_dashboard.yaml): una scheda per ogni birra fatta,
+# con date, piano teorico, curve misurate, letture della densità e note.
+#
+# Le schede sono file JSON in /config/storico_birre/<id>.json (formato e copie nel repo in
+# firmware/fermentatore_v6/storico_birre/). Le legge e le modifica scripts_py/storico_birre.py, lanciato da
+# shell_command. Le curve misurate non stanno nella scheda: la scheda dice quali entità e in quale periodo,
+# e la dashboard le prende dalle statistiche a lungo termine di HA (orarie, non vengono cancellate).
+#
+# Nuova birra: copiare un file di scheda, cambiare id e dati. L'elenco si rilegge da solo ogni ora o con
+# l'evento storico_birre_aggiornato. Niente input_select.reload: riporterebbe all'`initial` altri helper.
+# =============================================================================
+
+input_select:
+  # Le opzioni vere (etichette delle schede) le mette l'automazione qui sotto con set_options.
+  storico_birra:
+    name: "Storico birre - Birra"
+    icon: mdi:beer
+    options:
+      - "(nessuna scheda)"
+
+# Con un template nel comando HA non usa la shell e divide gli argomenti come shlex: il testo della nota
+# va in base64 (niente spazi né virgolette), il momento senza spazi (YYYY-MM-DDTHH:MM).
+shell_command:
+  storico_birre_elenco: "python3 /config/scripts_py/storico_birre.py elenco"
+  storico_birre_leggi: "python3 /config/scripts_py/storico_birre.py leggi {{ birra }}"
+  storico_birre_nota: "python3 /config/scripts_py/storico_birre.py nota {{ birra }} {{ testo | base64_encode }} {{ quando }}"
+  storico_birre_elimina_nota: "python3 /config/scripts_py/storico_birre.py elimina_ultima_nota {{ birra }}"
+  storico_birre_ripristina_profilo: "python3 /config/scripts_py/storico_birre.py ripristina_profilo {{ birra }}"
+  storico_birre_chiudi: "python3 /config/scripts_py/storico_birre.py chiudi {{ birra }} {{ fine }} {{ stato | base64_encode }}"
+
+template:
+  # Elenco delle schede, dalla più recente: id, nome, etichetta (quella mostrata nel menu), inizio, stato.
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: storico_birre_aggiornato
+      - trigger: time_pattern
+        minutes: "13"
+    actions:
+      - action: shell_command.storico_birre_elenco
+        response_variable: letto
+        continue_on_error: true
+    sensor:
+      - name: "Storico birre elenco"
+        unique_id: storico_birre_elenco
+        icon: mdi:book-open-variant
+        unit_of_measurement: "birre"
+        state: >-
+          {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+          {{ dati.get('birre', []) | count }}
+        attributes:
+          birre: >-
+            {% set dati = letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} %}
+            {{ dati.get('birre', []) }}
+
+  # La scheda della birra scelta nel menu. Due sensori dalla stessa lettura: le note a parte, perché
+  # crescono e gli attributi oltre i 16 KB non vanno nel database.
+  - triggers:
+      - trigger: state
+        entity_id: input_select.storico_birra
+      - trigger: event
+        event_type: storico_birre_aggiornato
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "14"
+    actions:
+      - variables:
+          birra: >-
+            {% set elenco = state_attr('sensor.storico_birre_elenco', 'birre') or [] %}
+            {{ elenco | selectattr('etichetta', 'eq', states('input_select.storico_birra'))
+                      | map(attribute='id') | first | default('', true) }}
+      - action: shell_command.storico_birre_leggi
+        data:
+          birra: "{{ birra if birra else 'nessuna' }}"
+        response_variable: letto
+        continue_on_error: true
+      - variables:
+          scheda: >-
+            {{ letto.stdout | from_json({}) if letto is defined and letto.returncode == 0 else {} }}
+    sensor:
+      - name: "Storico birra"
+        unique_id: storico_birra
+        icon: mdi:beer
+        state: "{{ scheda.get('nome', 'nessuna scheda') }}"
+        attributes:
+          id: "{{ scheda.get('id', '') }}"
+          stato: "{{ scheda.get('stato', '') }}"
+          stile: "{{ scheda.get('stile', '') }}"
+          lievito: "{{ scheda.get('lievito', '') }}"
+          fermentatore: "{{ scheda.get('fermentatore', '') }}"
+          regolazione: "{{ scheda.get('regolazione', '') }}"
+          inizio: "{{ scheda.get('inizio', '') }}"
+          fine: "{{ scheda.get('fine', '') }}"
+          fine_prevista: "{{ scheda.get('fine_prevista', false) }}"
+          og: "{{ scheda.get('og') }}"
+          fg_ricetta: "{{ scheda.get('fg_ricetta') }}"
+          # Il profilo usato per il piano: nome del file, inizio del piano, fg_obiettivo, profilo (step), eventi.
+          profilo: "{{ scheda.get('profilo', {}) }}"
+          # Le curve misurate: entità, nome, asse (temp o sg), colore, spessore, tratteggio, gradini, dal, al.
+          serie: "{{ scheda.get('serie', []) }}"
+          letture: "{{ scheda.get('letture', []) }}"
+          # A birra in corso, le letture si registrano nella sua dashboard Cotta: la scheda le prende da qui.
+          letture_live: "{{ scheda.get('letture_live', '') }}"
+          date: "{{ scheda.get('date', []) }}"
+          # Birra chiusa: indirizzo del file con le curve copiate dalle statistiche, e quando è stata chiusa.
+          curve: "{{ scheda.get('curve', '') }}"
+          cristallizzata: "{{ scheda.get('cristallizzata', '') }}"
+      - name: "Storico birra note"
+        unique_id: storico_birra_note
+        icon: mdi:notebook-edit-outline
+        state: "{{ scheda.get('note', []) | count }}"
+        attributes:
+          note: "{{ scheda.get('note', []) }}"
+
+  # Un'entità per ogni posto dei grafici (6 temperature, 2 densità), con la curva della scheda che ci va:
+  # apexcharts passa a data_generator solo lo stato dell'entità della serie, e così la curva si disegna
+  # anche quando l'entità che l'ha misurata non esiste più (birra chiusa, curve dal file).
+  - sensor:
+      - name: "Storico birra curva T1"
+        unique_id: storico_birra_curva_t1
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[0].nome if l | count > 0 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[0] if l | count > 0 else {} }}
+      - name: "Storico birra curva T2"
+        unique_id: storico_birra_curva_t2
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[1].nome if l | count > 1 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[1] if l | count > 1 else {} }}
+      - name: "Storico birra curva T3"
+        unique_id: storico_birra_curva_t3
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[2].nome if l | count > 2 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[2] if l | count > 2 else {} }}
+      - name: "Storico birra curva T4"
+        unique_id: storico_birra_curva_t4
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[3].nome if l | count > 3 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[3] if l | count > 3 else {} }}
+      - name: "Storico birra curva T5"
+        unique_id: storico_birra_curva_t5
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[4].nome if l | count > 4 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[4] if l | count > 4 else {} }}
+      - name: "Storico birra curva T6"
+        unique_id: storico_birra_curva_t6
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+          {{ l[5].nome if l | count > 5 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'temp') | list %}
+            {{ l[5] if l | count > 5 else {} }}
+      - name: "Storico birra curva SG1"
+        unique_id: storico_birra_curva_sg1
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'sg') | list %}
+          {{ l[0].nome if l | count > 0 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'sg') | list %}
+            {{ l[0] if l | count > 0 else {} }}
+      - name: "Storico birra curva SG2"
+        unique_id: storico_birra_curva_sg2
+        icon: mdi:chart-line
+        state: >-
+          {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'sg') | list %}
+          {{ l[1].nome if l | count > 1 else 'nessuna' }}
+        attributes:
+          serie: >-
+            {% set l = (state_attr('sensor.storico_birra', 'serie') or []) | selectattr('asse', 'eq', 'sg') | list %}
+            {{ l[1] if l | count > 1 else {} }}
+
+automation:
+  - id: storico_birre_menu
+    alias: "Storico birre - Aggiorna il menu delle birre"
+    description: >-
+      Mette nel menu le schede trovate in /config/storico_birre. Se la birra scelta non c'è più (o all'avvio
+      di HA) sceglie la più recente; poi rilegge la scheda.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: sensor.storico_birre_elenco
+    conditions:
+      - condition: template
+        value_template: "{{ (state_attr('sensor.storico_birre_elenco', 'birre') or []) | count > 0 }}"
+    actions:
+      - variables:
+          etichette: "{{ state_attr('sensor.storico_birre_elenco', 'birre') | map(attribute='etichetta') | list }}"
+          prima: "{{ states('input_select.storico_birra') not in etichette }}"
+          cambiato: "{{ etichette != state_attr('input_select.storico_birra', 'options') }}"
+      - if:
+          - condition: template
+            value_template: "{{ cambiato }}"
+        then:
+          - action: input_select.set_options
+            target:
+              entity_id: input_select.storico_birra
+            data:
+              options: "{{ etichette }}"
+      - if:
+          - condition: template
+            value_template: "{{ prima }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.storico_birra
+            data:
+              option: "{{ etichette[0] }}"
+
+script:
+  # Dialogo della dashboard, "Aggiungi una nota": la nota va nella scheda della birra scelta nel menu.
+  storico_birre_aggiungi_nota:
+    alias: "Storico birre - Aggiungi una nota"
+    icon: mdi:note-plus-outline
+    mode: queued
+    fields:
+      testo:
+        name: Nota
+        description: Cosa è successo o cosa si è deciso.
+        required: true
+        selector:
+          text:
+            multiline: true
+      quando:
+        name: Quando
+        description: Vuoto = adesso.
+        selector:
+          datetime:
+    sequence:
+      - variables:
+          birra: "{{ state_attr('sensor.storico_birra', 'id') }}"
+      - condition: template
+        value_template: "{{ birra | length > 0 and testo | trim | length > 0 }}"
+      - action: shell_command.storico_birre_nota
+        data:
+          birra: "{{ birra }}"
+          testo: "{{ testo | trim }}"
+          # Il selettore datetime dà "YYYY-MM-DD HH:MM:SS" in ora locale.
+          quando: >-
+            {{ (quando[:16] if quando is defined and quando else now().strftime('%Y-%m-%d %H:%M')) | replace(' ', 'T') }}
+        response_variable: esito
+      - event: storico_birre_aggiornato
+      - if:
+          - condition: template
+            value_template: "{{ esito.returncode != 0 }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: storico_birre_errore
+              title: "Storico birre: nota non salvata"
+              message: "{{ esito.stdout }} {{ esito.stderr }}"
+
+  storico_birre_elimina_ultima_nota:
+    alias: "Storico birre - Elimina l'ultima nota aggiunta"
+    icon: mdi:undo
+    mode: single
+    sequence:
+      - variables:
+          birra: "{{ state_attr('sensor.storico_birra', 'id') }}"
+      - condition: template
+        value_template: "{{ birra | length > 0 }}"
+      - action: shell_command.storico_birre_elimina_nota
+        data:
+          birra: "{{ birra }}"
+        response_variable: esito
+      - event: storico_birre_aggiornato
+
+  # Riscrive il profilo della scheda in /config/profili_fermentazione. Se esiste già un file con quel nome e
+  # un contenuto diverso, scrive <profilo>_<id>.json e lascia l'altro com'è.
+  storico_birre_ripristina_profilo:
+    alias: "Storico birre - Ripristina il profilo della birra"
+    icon: mdi:file-restore-outline
+    mode: single
+    sequence:
+      - variables:
+          birra: "{{ state_attr('sensor.storico_birra', 'id') }}"
+      - condition: template
+        value_template: "{{ birra | length > 0 }}"
+      - action: shell_command.storico_birre_ripristina_profilo
+        data:
+          birra: "{{ birra }}"
+        response_variable: esito
+      - variables:
+          r: "{{ esito.stdout | from_json({}) if esito.returncode == 0 else {} }}"
+      - action: persistent_notification.create
+        data:
+          notification_id: storico_birre_profilo
+          title: "Storico birre: profilo"
+          message: >-
+            {% if r.get('ok') and r.get('scritto') %}
+            Profilo scritto in /config/profili_fermentazione/{{ r.file }}.json. Per avviarlo dalla vista
+            Fermentazione va aggiunto alle opzioni di input_select.f1_v6_profilo_scelto (configuration.yaml).
+            {% elif r.get('ok') %}
+            Il profilo {{ r.file }}.json c'è già, identico: nulla da fare.
+            {% else %}
+            Profilo non ripristinato: {{ esito.stdout }} {{ esito.stderr }}
+            {% endif %}
+
+  # A fine birra (dialogo della dashboard, "Chiudi la birra"): cristallizza la scheda della birra scelta.
+  # Copia le curve misurate dalle statistiche in /config/www/storico_birre/<id>_curve.json e le letture della
+  # dashboard Cotta nella scheda, mette la fine vera e lo stato. Dopo, la pagina non legge più dati vivi.
+  # Si può rifare (per esempio con un'altra fine): riscrive tutto.
+  storico_birre_chiudi:
+    alias: "Storico birre - Chiudi la birra"
+    icon: mdi:archive-lock-outline
+    mode: single
+    fields:
+      fine:
+        name: Fine della birra
+        description: Di solito l'imbottigliamento. Vuoto = adesso.
+        selector:
+          datetime:
+      stato:
+        name: Stato
+        default: imbottigliata
+        selector:
+          text:
+    sequence:
+      - variables:
+          birra: "{{ state_attr('sensor.storico_birra', 'id') }}"
+      - condition: template
+        value_template: "{{ birra | length > 0 }}"
+      - action: shell_command.storico_birre_chiudi
+        data:
+          birra: "{{ birra }}"
+          fine: >-
+            {{ (fine[:16] if fine is defined and fine else now().strftime('%Y-%m-%d %H:%M')) | replace(' ', 'T') }}
+          stato: "{{ (stato if stato is defined and stato | trim else 'imbottigliata') | trim }}"
+        response_variable: esito
+      - event: storico_birre_aggiornato
+      - action: persistent_notification.create
+        data:
+          notification_id: storico_birre_chiudi
+          title: "Storico birre: birra chiusa"
+          message: >-
+            {% set r = esito.stdout | from_json({}) if esito.returncode == 0 else {} %}
+            {% if r.get('ok') %}
+            Scheda cristallizzata: {{ r.punti | length }} curve copiate ({{ r.punti.values() | sum }} punti orari),
+            {{ r.letture }} letture.
+            {% else %}
+            Chiusura non riuscita: {{ esito.stdout }} {{ esito.stderr }}
+            {% endif %}

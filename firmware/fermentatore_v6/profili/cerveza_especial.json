@@ -1,0 +1,73 @@
+{
+  "profilo": [
+    {
+      "step": "Fermentazione Primaria",
+      "temp": 12,
+      "duration_days": 5
+    },
+    {
+      "step": "Rampa Diacetile",
+      "temp": 17,
+      "ramp_days": 1
+    },
+    {
+      "step": "Diacetyl Rest",
+      "temp": 17,
+      "duration_days": 3
+    },
+    {
+      "step": "Discesa Lagerizzazione",
+      "temp": 2,
+      "ramp_days": 3
+    },
+    {
+      "step": "Lagerizzazione",
+      "temp": 2,
+      "duration_days": 21
+    }
+  ],
+  "eventi": [
+    {
+      "evento": "Scarico trub",
+      "step": "Fermentazione Primaria",
+      "giorni": 2.6,
+      "nota": "Trub di rottura: a scatti, finché esce il fango scuro"
+    },
+    {
+      "evento": "Diacetyl rest",
+      "step": "Rampa Diacetile",
+      "giorni": 0,
+      "nota": "Inkbird a 17 °C; anche prima se l'iSpindel è sotto 1,025 circa (finestra 1,028-1,019)"
+    },
+    {
+      "evento": "FG ferma? Scarico lievito",
+      "step": "Discesa Lagerizzazione",
+      "giorni": 0,
+      "nota": "Solo con la densità ferma da 48 h, se no allungare il rest. Poi termostato del chiller giù e Inkbird 12, 7, 2 °C, un passo al giorno"
+    },
+    {
+      "evento": "Scarico sedimento",
+      "step": "Lagerizzazione",
+      "giorni": 2.6,
+      "nota": "Lievito sceso col freddo"
+    },
+    {
+      "evento": "Scarico",
+      "step": "Lagerizzazione",
+      "giorni": 9.6,
+      "nota": "Piccolo, per tenere pulito il cono"
+    },
+    {
+      "evento": "Lagerizzazione minima",
+      "step": "Lagerizzazione",
+      "giorni": 14,
+      "nota": "Da qui si può imbottigliare, se è limpida e senza odore di zolfo"
+    },
+    {
+      "evento": "Imbottigliamento",
+      "step": "Lagerizzazione",
+      "giorni": 21,
+      "nota": "Ultimo scarico, poi imbottigliare. Priming calcolato a 17 °C, non a 2"
+    }
+  ]
+}

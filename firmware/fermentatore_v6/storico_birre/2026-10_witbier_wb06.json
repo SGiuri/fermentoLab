@@ -1,0 +1,195 @@
+{
+  "id": "2026-10_witbier_wb06",
+  "nome": "Witbier WB-06",
+  "stato": "in fermentazione",
+  "stile": "Witbier",
+  "lievito": "SafAle WB-06 (Fermentis, var. diastaticus)",
+  "fermentatore": "F1, sonda DS18B20 in un pozzetto nella birra",
+  "regolazione": "ESP32 di F1 (on/off, isteresi ±0,5 °C), chiller a glicole condiviso con la lager, fascia scaldante",
+  "inizio": "2026-10-23T16:19:44+02:00",
+  "fine": "2026-11-28T10:00:00+01:00",
+  "fine_prevista": true,
+  "og": null,
+  "fg_ricetta": null,
+  "profilo": {
+    "nome": "witbier_WB06",
+    "inizio": "2026-10-23T16:19:44+02:00",
+    "fg_obiettivo": 1.01,
+    "profilo": [
+      {
+        "step": "Fermentazione Primaria",
+        "temp": 19,
+        "duration_days": 3
+      },
+      {
+        "step": "Rampa Libera",
+        "temp": 22,
+        "ramp_days": 1
+      },
+      {
+        "step": "Finitura",
+        "temp": 22,
+        "duration_days": 9.02796
+      },
+      {
+        "step": "Rampa Freddo",
+        "temp": 6,
+        "ramp_days": 3
+      },
+      {
+        "step": "Cold Crash",
+        "temp": 6,
+        "duration_days": 3
+      },
+      {
+        "step": "Attesa Imbottigliamento",
+        "temp": 6,
+        "duration_days": 16.75
+      }
+    ],
+    "eventi": [
+      {
+        "evento": "Controllo densità",
+        "step": "Finitura",
+        "giorni": 1,
+        "nota": "Densimetro: WB-06 attenua molto, ci si aspetta di essere già vicini alla FG"
+      },
+      {
+        "evento": "FG ferma?",
+        "step": "Finitura",
+        "giorni": 9.02796,
+        "nota": "Densimetro: due letture uguali a 48 h di distanza prima di scendere al freddo. Se cala ancora, allungare la Finitura (allungata al 05/11 il 30/10). Rampa lenta: 3 giorni da 22 a 6 °C"
+      },
+      {
+        "evento": "Imbottigliamento",
+        "step": "Attesa Imbottigliamento",
+        "giorni": 16.75,
+        "nota": "Sabato 28/11, insieme alla lager. Priming calcolato a 22 °C, non a 6: WB-06 è diastaticus, imbottigliare solo a densità ferma"
+      }
+    ]
+  },
+  "serie": [
+    {
+      "entity": "sensor.v7_temperatura_chiller",
+      "nome": "Glicole",
+      "asse": "temp",
+      "colore": "#7fb8e6",
+      "spessore": 1,
+      "dal": "2026-10-28T12:35:00+01:00"
+    },
+    {
+      "entity": "sensor.f1_v6_temperatura",
+      "nome": "T birra (sonda F1)",
+      "asse": "temp",
+      "colore": "#e34948",
+      "spessore": 2,
+      "dal": "2026-10-23T16:19:44+02:00"
+    },
+    {
+      "entity": "sensor.f1_v6_setpoint",
+      "nome": "Setpoint ESP32",
+      "asse": "temp",
+      "colore": "#1a3f8f",
+      "spessore": 2,
+      "tratteggio": 3,
+      "gradini": true,
+      "dal": "2026-10-23T16:19:44+02:00"
+    }
+  ],
+  "letture_live": "sensor.f1_cotta_densita",
+  "letture": [
+    {
+      "quando": "2026-10-26 13:10",
+      "strumento": "rifrattometro",
+      "letta": 1.012,
+      "temp": 0,
+      "sg": null,
+      "og": false,
+      "nota": "Giorno 3, valore come letto"
+    }
+  ],
+  "date": [
+    {
+      "quando": "2026-10-23 17:00",
+      "evento": "Inoculo"
+    },
+    {
+      "quando": "2026-10-26 23:27",
+      "evento": "Incidente pompa: 12,1 °C"
+    },
+    {
+      "quando": "2026-10-28 11:53",
+      "evento": "Firmware 7.0.0"
+    },
+    {
+      "quando": "2026-10-30 15:54",
+      "evento": "Rampa freddo, poi ritardata"
+    },
+    {
+      "quando": "2026-11-05 16:00",
+      "evento": "Rampa lenta a 6 °C (prevista)"
+    },
+    {
+      "quando": "2026-11-28 10:00",
+      "evento": "Imbottigliamento (previsto)"
+    }
+  ],
+  "note": [
+    {
+      "quando": "2026-10-23 11:00",
+      "testo": "Sonda DS18B20 di F1 tolta dalla parete della lager e messa in un pozzetto nel fermentatore della witbier: da qui misura il cuore della birra."
+    },
+    {
+      "quando": "2026-10-23 16:19",
+      "testo": "Profilo witbier_WB06 avviato sull'ESP32 (on/off, isteresi ±0,5 °C): 19 °C 3 giorni, rampa a 22 °C, 22 °C 3 giorni, poi freddo a 6 °C (non 4: il chiller non scende sotto circa 4,5 °C). La FG obiettivo 1.010 è una stima: OG e ricetta non registrate."
+    },
+    {
+      "quando": "2026-10-23 17:00",
+      "testo": "Mosto (circa 30 °C) trasferito e raffreddato dal chiller: 26 → 18,4 °C in 30 minuti. Lettura giudicata credibile: nessun rimbalzo dopo lo stop della pompa, e intanto la lager in F2 si è scaldata di 3 °C. Inoculo verso le 17 a 19-20 °C."
+    },
+    {
+      "quando": "2026-10-23 17:50",
+      "testo": "Fascia scaldante scollegata per scelta: stanza a 23 °C, e con la fascia la temperatura era meno uniforme. Tutti gli step del piano sono sotto la temperatura ambiente."
+    },
+    {
+      "quando": "2026-10-25 18:18",
+      "testo": "Sonda persa: letture «scollegata» sempre più frequenti dalle 17:46, senza una causa evidente. Il firmware 6.5.1 passa alla regolazione stimata (1,4 % di freddo); 3 power-cycle e 3 riavvii non la recuperano."
+    },
+    {
+      "quando": "2026-10-26 04:36",
+      "testo": "Una sola lettura valida: 17,62 °C. La regolazione stimata aveva raffreddato di circa 1 °C in 10 ore."
+    },
+    {
+      "quando": "2026-10-26 07:56",
+      "testo": "ESP32 staccato dalla corrente: la sonda torna subito. È la seconda volta (dopo il 02/10) che la risolve solo uno spegnimento vero. Sospetto: VDD della sonda sui 3,3 V fissi invece che su GPIO25."
+    },
+    {
+      "quando": "2026-10-26 13:10",
+      "testo": "Rifrattometro 1.012, lettura grezza al giorno 3. Senza OG non si corregge per l'alcol."
+    },
+    {
+      "quando": "2026-10-26 23:27",
+      "testo": "Incidente. Sulla rampa verso 22 °C la sonda diventa intermittente; a ogni perdita la regolazione stimata ripartiva con la pompa accesa. 89 avvii della pompa fino all'01:18 e birra scesa a 12,1 °C. Bug del firmware, corretto nella 7.0.0: la finestra della stima non riparte più dalla fase accesa."
+    },
+    {
+      "quando": "2026-10-27 10:15",
+      "testo": "Fascia ricollegata per riportare su la birra (era a circa 14,7 °C); la pompa è bloccata dal modello della stima."
+    },
+    {
+      "quando": "2026-10-28 11:53",
+      "testo": "ESP32 aggiornato al firmware 7.0.0 via OTA: la temperatura arriva dal nodo sensori S3 (sensore 7 nel pozzetto di F1), senza power-cycle né riavvii per la sonda. Il profilo in memoria è intatto. Da allora nessuna lettura non valida."
+    },
+    {
+      "quando": "2026-10-30 15:54",
+      "testo": "L'ESP32 inizia la rampa a 6 °C, 34 minuti dopo il piano per le pause della sonda."
+    },
+    {
+      "quando": "2026-10-30 22:30",
+      "testo": "Cold crash ritardato. La WB-06 è diastaticus e può continuare ad attenuare lentamente: imbottigliata troppo presto, rischio di bottiglie troppo gasate. La birra era già scesa a 17 °C ed è stata riportata a 22 °C."
+    },
+    {
+      "quando": "2026-10-30 22:37",
+      "testo": "Nuovo piano: 22 °C fino a giovedì 05/11 alle 16, poi rampa lenta a 6 °C in 3 giorni (circa 5 °C al giorno), cold crash 3 giorni e attesa a 6 °C fino all'imbottigliamento di sabato 28/11 alle 10. Si scende al freddo solo con due letture del densimetro uguali a 48 ore di distanza. All'ESP32 è stato mandato solo il resto del piano, quindi i suoi giorni totali ripartono dal 30/10."
+    }
+  ]
+}
